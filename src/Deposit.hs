@@ -30,7 +30,7 @@ type BitcoinBlockHeight = U32
 type Transaction = String -- placeholder
 type Txid = String -- placeholder
 type OutPoint = (Txid, U32)
-type Nonce = String -- placeholder
+type PubNonce = String -- placeholder
 type AggNonce = String -- placeholder
 type PartialSignature = String -- placeholder
 type Signature = String -- placeholder
@@ -67,16 +67,16 @@ data DepositState
         , blockHeight :: U32 -- the last block height observed by this state machine
         , linkedGraphs :: Set.Set OperatorIdx -- operators whose graphs have been generated to spend this deposit
         }
-    | GraphGenerated -- All operators' graphs have been generated and linked to this deposit, also tracks DT nonces
+    | GraphGenerated -- All operators' graphs have been generated and linked to this deposit, also tracks DT pubnonces
         { depositIdx :: U32
         , depositTransaction :: DepositTx
         , drtBlockHeight :: BitcoinBlockHeight
         , depositRequestOutPoint :: OutPoint
         , outputIndex :: U32
         , blockHeight :: U32
-        , nonces :: Map.Map OperatorIdx Nonce -- nonces required to sign the deposit transaction (per operator)
+        , pubnonces :: Map.Map OperatorIdx PubNonce -- pubnonces required to sign the deposit transaction (per operator)
         }
-    | DepositNoncesCollected -- All deposit nonces have been collected
+    | DepositNoncesCollected -- All deposit pubnonces have been collected
         { depositIdx :: U32
         , depositTransaction :: DepositTx
         , drtBlockHeight :: BitcoinBlockHeight
@@ -118,9 +118,9 @@ data DepositState
         , fulfillmentBlockHeight :: BitcoinBlockHeight -- block height where the fulfillment transaction was confirmed
         , cooperativePayoutDeadline :: BitcoinBlockHeight -- block height by which the cooperative payout must be completed
         , operatorDesc :: Maybe BtcDescriptor -- the output descriptor of the operator for the cooperative payout (needs to be provided by the recipient, only set once)
-        , payoutNonces :: Map.Map OperatorIdx Nonce -- nonces required to sign the cooperative payout transaction (per operator)
+        , payoutNonces :: Map.Map OperatorIdx PubNonce -- pubnonces required to sign the cooperative payout transaction (per operator)
         }
-    | PayoutNoncesCollected -- All nonces have been collected for cooperative payout
+    | PayoutNoncesCollected -- All pubnonces have been collected for cooperative payout
         { depositIdx :: U32
         , blockHeight :: U32
         , depositOutPoint :: OutPoint
@@ -178,7 +178,7 @@ data DepositDuty
         , deadline :: BitcoinBlockHeight
         , recipientDesc :: BtcDescriptor -- the user's descriptor where funds are to be sent by the operator
         }
-    -- request nonces from *all* operators for cooperative payout (this duty execution will generate the operator's descriptor which will then be stored in state)
+    -- request pubnonces from *all* operators for cooperative payout (this duty execution will generate the operator's descriptor which will then be stored in state)
     -- only the assignee creates this duty
     -- the assignee will also request *themselves* since getting a new descriptor from a wallet is a side-effect and has to be done inside a duty context
     | RequestPayoutNonce
@@ -191,7 +191,7 @@ data DepositDuty
         , operatorDesc :: BtcDescriptor -- descriptor of the operator to receive payout
         }
     -- request partial signatures from *all* operators for cooperative payout
-    -- this technically does not require a request since the operators can just publish their partials when they aggregate nonces
+    -- this technically does not require a request since the operators can just publish their partials when they aggregate pubnonces
     -- however, it is cleaner to have the assignee drive all actions in the cooperative payout path
     -- and have each operator respond via a dedicated 1:1 channel
     | RequestPayoutPartial
@@ -245,12 +245,12 @@ cooperativePayoutWindow = 2016 -- e.g., ~2 weeks assuming 10 min blocks
 
 -- STFs
 processGraphGenerated :: DepositState -> ExecConfig -> OperatorIdx -> (DepositState, Maybe DepositDuty)
-processNonce :: DepositState -> ExecConfig -> Nonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
+processNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processDepositConfirmation :: DepositState -> Transaction -> DepositState
 processAssignment :: DepositState -> ExecConfig -> BitcoinBlockHeight -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processFulfillment :: DepositState -> ExecConfig -> Transaction -> BitcoinBlockHeight -> (DepositState, Maybe DepositDuty)
-processPayoutNonce :: DepositState -> ExecConfig -> Nonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
+processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
 processDepositSpend :: DepositState -> Transaction -> DepositState
@@ -261,7 +261,7 @@ processGraphGenerated deposit@Created{..} _cfg operatorIdx =
             if Set.size linkedGraphs' == opCardinality _cfg
                 then
                     GraphGenerated
-                        { nonces = mempty
+                        { pubnonces = mempty
                         , ..
                         }
                 else
@@ -270,7 +270,7 @@ processGraphGenerated deposit@Created{..} _cfg operatorIdx =
 processGraphGenerated state _ _ = (state, Nothing) -- do nothing if the state has already progressed
 
 processNonce deposit@GraphGenerated{..} cfg nonce operatorIdx =
-    let newNonces = Map.insert operatorIdx nonce nonces
+    let newNonces = Map.insert operatorIdx nonce pubnonces
         (newState, duty) =
             if Map.size newNonces == opCardinality cfg
                 then
@@ -287,7 +287,7 @@ processNonce deposit@GraphGenerated{..} cfg nonce operatorIdx =
                             , depositAggNonce = aggNonce}
                      in (newState', duty')
                 else
-                    (deposit{nonces = newNonces}, Nothing)
+                    (deposit{pubnonces = newNonces}, Nothing)
      in (newState, duty)
 processNonce _ _ _ _ = error "Invalid state transition"
 
@@ -349,7 +349,7 @@ processFulfillment Assigned{..} cfg fulfillmentTx fulfillmentBlockHeight =
             Fulfilled
                 { fulfillmentTxid = txid fulfillmentTx
                 , fulfillmentBlockHeight = fulfillmentBlockHeight
-                , operatorDesc = Nothing -- to be set when payout nonces are requested and a descriptor is provided in the request
+                , operatorDesc = Nothing -- to be set when payout pubnonces are requested and a descriptor is provided in the request
                 , payoutNonces = mempty
                 , ..
                 }
@@ -372,7 +372,7 @@ processPayoutNonce deposit@Fulfilled{..} cfg nonce operatorIdx =
                                 , payoutPartialSignatures = mempty
                                 , payoutOutputDesc = case operatorDesc of
                                     Just desc -> desc
-                                    Nothing -> error "Operator descriptor must be set before collecting payout nonces"
+                                    Nothing -> error "Operator descriptor must be set before collecting payout pubnonces"
                                 , ..
                                 }
                         duty' = Just PublishPayoutPartial{depositOutPoint = depositOutPoint, depositIdx = depositIdx, aggNonce = aggNonce}
