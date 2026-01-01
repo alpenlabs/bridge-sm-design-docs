@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Graph (
     GraphState,
@@ -357,12 +356,12 @@ data GraphDuty -- Tasks to be completed post state transition
 
 -- Signals
 -- The messages that need to be propagated across state machines
-{-# HLINT ignore "Use newtype instead of data" #-}
 data GraphSignal
     = GraphAvailable OperatorIdx -- signifies that the graph is fully signed and available for use for unilateral reimbursement
     | OperatorSlashed OperatorIdx -- signifies that the operator has been slashed
     deriving (Show, Eq)
 
+{-# HLINT ignore "Use newtype instead of data" #-}
 data DepositSignal
     = CooperativePathFailed DepositIdx -- signifies that the cooperative path for this deposit has failed and unilateral reimbursement must be initiated (triggers the `processActivation` STF)
     deriving (Show, Eq)
