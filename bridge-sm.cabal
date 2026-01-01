@@ -62,7 +62,8 @@ library
     exposed-modules:  
         Deposit,
         Operator,
-        Graph
+        Graph,
+        Stake
 
     -- Modules included in this library but not exported.
     -- other-modules:
