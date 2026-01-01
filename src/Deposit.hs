@@ -107,7 +107,6 @@ data DepositState
         , assignee :: OperatorIdx -- operator assigned to front the user
         , deadline :: BitcoinBlockHeight -- block height by which the operator must fulfill the withdrawal
         , recipientDesc :: BtcDescriptor -- the user's descriptor where funds are to be sent by the operator
-        , cooperativePayoutDeadline :: BitcoinBlockHeight -- block height by which the cooperative payout must be completed
         }
     | Fulfilled -- Operator has fronted the user
         { depositIdx :: U32
@@ -125,10 +124,10 @@ data DepositState
         , blockHeight :: U32
         , depositOutPoint :: OutPoint
         , assignee :: OperatorIdx -- required to pass onto the `CooperativeFailed` state from where a graph can be assigned
-        , fulfillmentTxid :: Txid -- do -- 
-        , fulfillmentBlockHeight :: BitcoinBlockHeight -- do -- 
+        , fulfillmentTxid :: Txid -- do --
+        , fulfillmentBlockHeight :: BitcoinBlockHeight -- do --
         , payoutOutputDesc :: BtcDescriptor
-        , cooperativePayoutDeadline :: BitcoinBlockHeight -- block height by which the cooperative payout must be completed
+        , cooperativePayoutDeadline :: BitcoinBlockHeight
         , payoutAggNonce :: AggNonce -- aggregated nonce for signing the cooperative payout transaction
         , payoutPartialSignatures :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the cooperative payout transaction
         }
@@ -154,7 +153,7 @@ data DepositState
         , payoutTxid :: Txid -- txid of the transaction that spent the deposit, might not be the same as the Cooperative payout txid
         }
     | Aborted -- Deposit Request UTXO was taken by the depositor
-        { depositIdx :: U32  -- the index of the deposit that was aborted
+        { depositIdx :: U32 -- the index of the deposit that was aborted
         }
     deriving (Show, Eq)
 
@@ -178,10 +177,10 @@ data DepositDuty
         , deadline :: BitcoinBlockHeight
         , recipientDesc :: BtcDescriptor -- the user's descriptor where funds are to be sent by the operator
         }
-    -- request pubnonces from *all* operators for cooperative payout (this duty execution will generate the operator's descriptor which will then be stored in state)
-    -- only the assignee creates this duty
-    -- the assignee will also request *themselves* since getting a new descriptor from a wallet is a side-effect and has to be done inside a duty context
-    | RequestPayoutNonce
+    | -- request pubnonces from *all* operators for cooperative payout (this duty execution will generate the operator's descriptor which will then be stored in state)
+      -- only the assignee creates this duty
+      -- the assignee will also request *themselves* since getting a new descriptor from a wallet is a side-effect and has to be done inside a duty context
+      RequestPayoutNonce
         { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
         , depositIdx :: DepositIdx
         }
@@ -190,11 +189,11 @@ data DepositDuty
         , operatorIdx :: OperatorIdx -- the index of the operator requesting cooperation for payout (could be the same as this operator)
         , operatorDesc :: BtcDescriptor -- descriptor of the operator to receive payout
         }
-    -- request partial signatures from *all* operators for cooperative payout
-    -- this technically does not require a request since the operators can just publish their partials when they aggregate pubnonces
-    -- however, it is cleaner to have the assignee drive all actions in the cooperative payout path
-    -- and have each operator respond via a dedicated 1:1 channel
-    | RequestPayoutPartial
+    | -- request partial signatures from *all* operators for cooperative payout
+      -- this technically does not require a request since the operators can just publish their partials when they aggregate pubnonces
+      -- however, it is cleaner to have the assignee drive all actions in the cooperative payout path
+      -- and have each operator respond via a dedicated 1:1 channel
+      RequestPayoutPartial
         { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
         , depositIdx :: DepositIdx
         }
@@ -244,17 +243,18 @@ cooperativePayoutWindow :: BitcoinBlockHeight
 cooperativePayoutWindow = 2016 -- e.g., ~2 weeks assuming 10 min blocks
 
 -- STFs
+-- Definitions
 processGraphGenerated :: DepositState -> ExecConfig -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processDepositConfirmation :: DepositState -> Transaction -> DepositState
-processAssignment :: DepositState -> ExecConfig -> BitcoinBlockHeight -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
+processAssignment :: DepositState -> ExecConfig -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processFulfillment :: DepositState -> ExecConfig -> Transaction -> BitcoinBlockHeight -> (DepositState, Maybe DepositDuty)
 processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
 processDepositSpend :: DepositState -> Transaction -> DepositState
-
+-- Implementations
 processGraphGenerated deposit@Created{..} _cfg operatorIdx =
     let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
         newState =
@@ -281,10 +281,13 @@ processNonce deposit@GraphGenerated{..} cfg nonce operatorIdx =
                                 , partialSignatures = mempty
                                 , ..
                                 }
-                        duty' = Just PublishDepositPartials{
-                            depositOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
-                            , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
-                            , depositAggNonce = aggNonce}
+                        duty' =
+                            Just
+                                PublishDepositPartials
+                                    { depositOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
+                                    , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
+                                    , depositAggNonce = aggNonce
+                                    }
                      in (newState', duty')
                 else
                     (deposit{pubnonces = newNonces}, Nothing)
@@ -321,34 +324,33 @@ processDepositConfirmation DepositPartialsCollected{..} confirmedTx =
      in newState
 processDepositConfirmation _ _ = error "Invalid state transition"
 
-processAssignment Deposited{..} cfg curHeight assignee deadline recipientDesc =
+processAssignment Deposited{..} cfg assignee deadline recipientDesc =
     let newState =
             Assigned
                 { assignee = assignee
                 , deadline = deadline
                 , recipientDesc = recipientDesc
-                , cooperativePayoutDeadline = curHeight + cooperativePayoutWindow 
                 , ..
                 }
         duty = getFulfillWithdrawalDuty newState cfg
      in (newState, duty)
-processAssignment deposit@Assigned{} cfg curHeight assignee' deadline' recipientDesc' =
+processAssignment deposit@Assigned{} cfg assignee' deadline' recipientDesc' =
     let newState =
             deposit
                 { assignee = assignee'
                 , deadline = deadline'
                 , recipientDesc = recipientDesc'
-                , cooperativePayoutDeadline = curHeight + cooperativePayoutWindow -- update the cooperative payout deadline after reassignment
                 }
         duty = getFulfillWithdrawalDuty newState cfg
      in (newState, duty)
-processAssignment _ _ _ _ _ _ = error "Invalid state transition"
+processAssignment _ _ _ _ _ = error "Invalid state transition"
 
 processFulfillment Assigned{..} cfg fulfillmentTx fulfillmentBlockHeight =
     let newState =
             Fulfilled
                 { fulfillmentTxid = txid fulfillmentTx
                 , fulfillmentBlockHeight = fulfillmentBlockHeight
+                , cooperativePayoutDeadline = fulfillmentBlockHeight + cooperativePayoutWindow
                 , operatorDesc = Nothing -- to be set when payout pubnonces are requested and a descriptor is provided in the request
                 , payoutNonces = mempty
                 , ..
@@ -429,18 +431,20 @@ notifyNewBlock height Fulfilled{..}
 notifyNewBlock height PayoutNoncesCollected{..}
     | height > fulfillmentBlockHeight + cooperativePayoutWindow =
         CooperativePathFailed{..}
-notifyNewBlock _ state@Aborted {} = state
-notifyNewBlock height state = state { blockHeight = height }
+notifyNewBlock _ state@Aborted{} = state
+notifyNewBlock height state = state{blockHeight = height}
 
 -- Handles both PayoutPartialsCollected and PayoutNoncesCollected states
 -- It is technically possible to see a spend before all the payout partials have been collected
 -- this can happen if the assignee withholds their partial signature
 -- and just broadcasts the cooperative payout tx directly.
 processDepositSpend state confirmedTx = case state of
-    PayoutPartialsCollected{..} | depositOutPoint `elem` inpoints confirmedTx ->
-        Spent { payoutTxid = txid confirmedTx, .. }
-    PayoutNoncesCollected{..} | depositOutPoint `elem` inpoints confirmedTx ->
-        Spent { payoutTxid = txid confirmedTx, .. }
+    PayoutPartialsCollected{..}
+        | depositOutPoint `elem` inpoints confirmedTx ->
+            Spent{payoutTxid = txid confirmedTx, ..}
+    PayoutNoncesCollected{..}
+        | depositOutPoint `elem` inpoints confirmedTx ->
+            Spent{payoutTxid = txid confirmedTx, ..}
     _ -> error "Invalid state transition"
 
 -- Introspection functions
