@@ -28,6 +28,7 @@ module Graph (
     processPayout,
     processPayoutConnectorSpent,
     notifyNewBlock,
+    lastProcessedBlock,
 ) where
 
 -- Prelude
@@ -140,6 +141,7 @@ data GraphState
           depositIdx :: DepositIdx -- the index of the deposit this graph is associated with
         , operatorIdx :: OperatorIdx -- the index of the operator this graph belongs to
         , depositOutPoint :: OutPoint -- the outpoint deposit transaction associated with this contract , outputIndex :: U32 -- the output index within the deposit transaction that is to be used for this pegout (to allow batched deposits)
+        , blockHeight :: BitcoinBlockHeight -- the height of the most recent block that this state is aware of
         , drtBlockHeight :: BitcoinBlockHeight -- the block height at which the DRT was confirmed
         }
     | GraphGenerated
@@ -147,6 +149,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , drtBlockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary -- the txids of the generated pegout graph transactions (required for tx filtering)
@@ -156,6 +159,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , drtBlockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
@@ -166,6 +170,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , drtBlockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
@@ -177,6 +182,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , drtBlockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
@@ -187,6 +193,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , drtBlockHeight :: BitcoinBlockHeight -- needed in case state transitions from `Assigned` back to `GraphSigned` (due to reassignment)
         , graphData :: GraphData
         , graphSummary :: GraphSummary
@@ -200,6 +207,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
         , fulfillmentTxid :: Txid -- the txid of the fulfillment transaction submitted on chain
@@ -210,6 +218,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
         , fulfillmentTxid' :: Maybe Txid -- the txid of the fulfillment transaction submitted on chain (if present; could be absent for faulty claims)
@@ -221,6 +230,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
         , fulfillmentTxid' :: Maybe Txid
@@ -232,6 +242,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
         , contestBlockHeight :: BitcoinBlockHeight -- needed in case the operator needs to be slashed after contested payout timeout
@@ -244,6 +255,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , contestBlockHeight :: BitcoinBlockHeight
         , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
         , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
@@ -253,6 +265,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , graphData :: GraphData
         , graphSummary :: GraphSummary
         , contestBlockHeight :: BitcoinBlockHeight
@@ -264,6 +277,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , contestBlockHeight :: BitcoinBlockHeight
         , expectedPayoutTxid :: Txid -- the txid of the expected contested payout transaction (full summary can be discarded)
         , possibleSlashTxid :: Txid -- the txid of the possible slash transaction (this can happen if the operator is not functional/live)
@@ -273,6 +287,7 @@ data GraphState
           depositIdx :: DepositIdx
         , operatorIdx :: OperatorIdx
         , depositOutPoint :: OutPoint
+        , blockHeight :: BitcoinBlockHeight
         , contestBlockHeight :: BitcoinBlockHeight
         , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
         , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
@@ -818,44 +833,48 @@ mkSlashOutput state =
 
 -- check if uncontested payout is possible
 notifyNewBlock curState@Claimed{..} _opTable newBlockHeight
-    | newBlockHeight > claimBlockHeight + contestTimeout = (curState, GraphTransitionOutput{signal = Nothing, duty = Just PublishUncontestedPayout{uncontestedPayoutTx = "uncontested_payout_tx_placeholder"}}) -- Placeholder for uncontested payout transaction
-    | otherwise = (curState, emptyOutput)
+    | newBlockHeight > claimBlockHeight + contestTimeout = (curState{blockHeight = newBlockHeight}, GraphTransitionOutput{signal = Nothing, duty = Just PublishUncontestedPayout{uncontestedPayoutTx = "uncontested_payout_tx_placeholder"}}) -- Placeholder for uncontested payout transaction
+    | otherwise = (curState{blockHeight = newBlockHeight}, emptyOutput)
 -- check if bridge proof timeout (or payout) is possible
 notifyNewBlock curState@Contested{..} _opTable newBlockHeight
-    | newBlockHeight > contestBlockHeight + payoutTimeout = (curState, mkSlashOutput curState) -- Placeholder for slash transaction
-    | newBlockHeight > contestBlockHeight + proofTimeout = (curState, GraphTransitionOutput{signal = Nothing, duty = Just PublishBridgeProofTimeout{timeoutTx = "bridge_proof_timeout_tx_placeholder"}}) -- Placeholder for bridge proof timeout transaction
-    | otherwise = (curState, emptyOutput)
+    | newBlockHeight > contestBlockHeight + payoutTimeout = (curState{blockHeight = newBlockHeight}, mkSlashOutput curState) -- Placeholder for slash transaction
+    | newBlockHeight > contestBlockHeight + proofTimeout = (curState{blockHeight = newBlockHeight}, GraphTransitionOutput{signal = Nothing, duty = Just PublishBridgeProofTimeout{timeoutTx = "bridge_proof_timeout_tx_placeholder"}}) -- Placeholder for bridge proof timeout transaction
+    | otherwise = (curState{blockHeight = newBlockHeight}, emptyOutput)
 -- check if ACK is possible
 notifyNewBlock curState@CounterProofPosted{..} opTable newBlockHeight
-    | newBlockHeight > contestBlockHeight + payoutTimeout = (curState, mkSlashOutput curState) -- Placeholder for slash transaction
+    | newBlockHeight > contestBlockHeight + payoutTimeout = (curState{blockHeight = newBlockHeight}, mkSlashOutput curState) -- Placeholder for slash transaction
     -- if no one ACK's their counterproof, the operator could still get a payout (even without NACK-ing)
     | newBlockHeight > contestBlockHeight + counterProofAckTimeout =
-        (curState, GraphTransitionOutput{signal = Nothing, duty = Just PublishContestedPayout{contestedPayoutTx = "contested_payout_tx_placeholder"}}) -- Placeholder for contested payout transaction
+        (curState{blockHeight = newBlockHeight}, GraphTransitionOutput{signal = Nothing, duty = Just PublishContestedPayout{contestedPayoutTx = "contested_payout_tx_placeholder"}}) -- Placeholder for contested payout transaction
     | otherwise =
         let povCounterProof = Map.lookup (povIdx opTable) counterProofsAndConfs
             isAckViable = isJust povCounterProof && snd (fromJust povCounterProof) + nackTimeout > newBlockHeight
          in if isAckViable
-                then (curState, GraphTransitionOutput{signal = Nothing, duty = Just PublishCounterProofAck{counterProofAckTx = "counterproof_ack_tx_placeholder"}}) -- Placeholder for counterproof ACK transaction
-                else (curState, emptyOutput)
+                then (curState{blockHeight = newBlockHeight}, GraphTransitionOutput{signal = Nothing, duty = Just PublishCounterProofAck{counterProofAckTx = "counterproof_ack_tx_placeholder"}}) -- Placeholder for counterproof ACK transaction
+                else (curState{blockHeight = newBlockHeight}, emptyOutput)
 -- check if slashing/payout is possible for all other cases
 notifyNewBlock curState _opTable newBlockHeight = case curState of
     BridgeProofPosted{..}
         | newBlockHeight > contestBlockHeight + counterProofAckTimeout ->
             (curState, GraphTransitionOutput{signal = Nothing, duty = Just PublishContestedPayout{contestedPayoutTx = "contested_payout_tx_placeholder"}}) -- Placeholder for contested payout transaction
         | newBlockHeight > contestBlockHeight + payoutTimeout ->
-            (curState, mkSlashOutput curState)
+            (curState{blockHeight = newBlockHeight}, mkSlashOutput curState)
     BridgeProofTimedout{..}
         | newBlockHeight > contestBlockHeight + payoutTimeout ->
-            (curState, mkSlashOutput curState)
+            (curState{blockHeight = newBlockHeight}, mkSlashOutput curState)
     Acked{..}
         | newBlockHeight > contestBlockHeight + payoutTimeout ->
-            (curState, mkSlashOutput curState)
+            (curState{blockHeight = newBlockHeight}, mkSlashOutput curState)
     AllNackd{..}
         | newBlockHeight > contestBlockHeight + counterProofAckTimeout ->
-            (curState, GraphTransitionOutput{signal = Nothing, duty = Just PublishContestedPayout{contestedPayoutTx = "contested_payout_tx_placeholder"}}) -- Placeholder for contested payout transaction
+            (curState{blockHeight = newBlockHeight}, GraphTransitionOutput{signal = Nothing, duty = Just PublishContestedPayout{contestedPayoutTx = "contested_payout_tx_placeholder"}}) -- Placeholder for contested payout transaction
         | newBlockHeight > contestBlockHeight + payoutTimeout ->
-            (curState, mkSlashOutput curState)
-    _ -> (curState, emptyOutput)
+            (curState{blockHeight = newBlockHeight}, mkSlashOutput curState)
+    -- The next three states should not need any further updates
+    Slashed{} -> (curState, emptyOutput)
+    Withdrawn{} -> (curState, emptyOutput)
+    Aborted{} -> (curState, emptyOutput)
+    _ -> (curState{blockHeight = newBlockHeight}, emptyOutput)
 
 -- Introspection Functions
 payoutConnectorIdx :: U32
@@ -886,3 +905,10 @@ getPayoutConnectorOutPoint state =
                 then Just (fromJust claimTxid', payoutConnectorIdx)
                 else Nothing
      in outpoint
+
+lastProcessedBlock :: GraphState -> Maybe BitcoinBlockHeight
+lastProcessedBlock state = case state of
+    Withdrawn{} -> Nothing
+    Slashed{} -> Nothing
+    Aborted{} -> Nothing
+    otherState -> Just otherState.blockHeight
