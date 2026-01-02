@@ -321,6 +321,18 @@ processDepositConfirmation DepositPartialsCollected{..} confirmedTx =
                         }
                 else error "Transaction confirmation does not match expected deposit transaction"
      in newState
+-- This can happen if one of the operators withholds their own partial signature
+-- while aggregating it with the rest of the collected partials and broadcasts it unilaterally
+processDepositConfirmation DepositNoncesCollected{..} confirmedTx =
+    let newState =
+            if txid confirmedTx == txid (tx depositTransaction)
+                then
+                    Deposited
+                        { depositOutPoint = (txid confirmedTx, outputIndex)
+                        , ..
+                        }
+                else error "Transaction confirmation does not match expected deposit transaction"
+     in newState
 processDepositConfirmation _ _ = error "Invalid state transition"
 
 processAssignment Deposited{..} cfg assignee deadline recipientDesc =
@@ -448,16 +460,20 @@ processDepositRequestSpend state confirmedTx = case state of
     Created{..}
         | chkUserSpend depositRequestOutPoint confirmedTx ->
             Aborted{..}
+        | otherwise -> error "not user spend"
     GraphGenerated{..}
         | chkUserSpend depositRequestOutPoint confirmedTx ->
             Aborted{..}
+        | otherwise -> error "not user spend"
     DepositNoncesCollected{..}
         | chkUserSpend depositRequestOutPoint confirmedTx ->
             Aborted{..}
+        | otherwise -> error "not user spend"
     DepositPartialsCollected{..}
         | chkUserSpend depositRequestOutPoint confirmedTx ->
             Aborted{..}
-    _ -> error "Invalid state transition"
+        | otherwise -> error "not user spend"
+    _ -> error $ "Invalid event for state: " ++ show state
 
 -- Introspection functions
 hasCooperativePayoutFailed :: DepositState -> Bool
