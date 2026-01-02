@@ -55,13 +55,15 @@ sighashes _ = "sighash_placeholder" :| [] -- Placeholder implementation
 inpoints :: Transaction -> NonEmpty OutPoint
 inpoints _ = ("txid_placeholder", 0) :| [] -- Placeholder implementation for input outpoints (head :| tail)
 
+witnessLength :: Transaction -> U32
+witnessLength _ = 0 -- Placeholder implementation
+
 -- State
 -- This state tracks the lifecycle of a deposit UTXO.
 data DepositState
     = Created -- State machine initialized, also tracks graph generations
         { depositIdx :: U32
         , depositTransaction :: DepositTx
-        , drtBlockHeight :: BitcoinBlockHeight -- block height where the DRT was confirmed
         , depositRequestOutPoint :: OutPoint -- used to track the deposit request UTXO in case of aborts
         , outputIndex :: U32 -- index of the deposit output corresponding to the `depositIdx` (in case we aggregate multiple deposits into one transaction)
         , blockHeight :: U32 -- the last block height observed by this state machine
@@ -70,7 +72,6 @@ data DepositState
     | GraphGenerated -- All operators' graphs have been generated and linked to this deposit, also tracks DT pubnonces
         { depositIdx :: U32
         , depositTransaction :: DepositTx
-        , drtBlockHeight :: BitcoinBlockHeight
         , depositRequestOutPoint :: OutPoint
         , outputIndex :: U32
         , blockHeight :: U32
@@ -79,7 +80,6 @@ data DepositState
     | DepositNoncesCollected -- All deposit pubnonces have been collected
         { depositIdx :: U32
         , depositTransaction :: DepositTx
-        , drtBlockHeight :: BitcoinBlockHeight
         , depositRequestOutPoint :: OutPoint
         , outputIndex :: U32
         , blockHeight :: U32
@@ -90,7 +90,6 @@ data DepositState
         { depositIdx :: U32
         , outputIndex :: U32
         , blockHeight :: U32
-        , drtBlockHeight :: BitcoinBlockHeight
         , depositRequestOutPoint :: OutPoint
         , depositTransaction :: DepositTx
         , aggSignature :: Signature -- aggregated signature for the deposit transaction
@@ -148,7 +147,6 @@ data DepositState
         }
     | Spent -- Deposit has been spent on-chain
         { depositIdx :: U32
-        , blockHeight :: U32
         , depositOutPoint :: OutPoint
         , payoutTxid :: Txid -- txid of the transaction that spent the deposit, might not be the same as the Cooperative payout txid
         }
@@ -254,6 +252,7 @@ processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (
 processPayoutPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
 processDepositSpend :: DepositState -> Transaction -> DepositState
+processDepositRequestSpend :: DepositState -> Transaction -> DepositState
 -- Implementations
 processGraphGenerated deposit@Created{..} _cfg operatorIdx =
     let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
@@ -413,25 +412,14 @@ processPayoutPartial deposit@PayoutNoncesCollected{..} cfg partialSig operatorId
 processPayoutPartial _ _ _ _ = error "Invalid state transition"
 
 -- Processes information about new blocks and applies any updates related to block height timeouts
-notifyNewBlock height Created{..}
-    | height > drtBlockHeight + abortWindow =
-        Aborted{..}
-notifyNewBlock height GraphGenerated{..}
-    | height > drtBlockHeight + abortWindow =
-        Aborted{..}
-notifyNewBlock height DepositNoncesCollected{..}
-    | height > drtBlockHeight + abortWindow =
-        Aborted{..}
-notifyNewBlock height DepositPartialsCollected{..}
-    | height > drtBlockHeight + abortWindow =
-        Aborted{..}
 notifyNewBlock height Fulfilled{..}
     | height > fulfillmentBlockHeight + cooperativePayoutWindow =
         CooperativePathFailed{..}
 notifyNewBlock height PayoutNoncesCollected{..}
     | height > fulfillmentBlockHeight + cooperativePayoutWindow =
         CooperativePathFailed{..}
-notifyNewBlock _ state@Aborted{} = state
+notifyNewBlock _ state@Aborted{} = state -- does not need any more updates
+notifyNewBlock _ state@Spent{} = state -- does not need any more updates
 notifyNewBlock height state = state{blockHeight = height}
 
 -- Handles both PayoutPartialsCollected and PayoutNoncesCollected states
@@ -445,6 +433,30 @@ processDepositSpend state confirmedTx = case state of
     PayoutNoncesCollected{..}
         | depositOutPoint `elem` inpoints confirmedTx ->
             Spent{payoutTxid = txid confirmedTx, ..}
+    _ -> error "Invalid state transition"
+
+chkUserSpend :: OutPoint -> Transaction -> Bool
+chkUserSpend outPoint confirmedTx = outPoint `elem` inpoints confirmedTx && witnessLength confirmedTx /= 1 -- script spend has more than 1 witness item (covenant spend has exactly 1 witness item)
+
+-- While it _should_ be enough to just check if the DRT is old enough,
+-- this stricter check for the non-covenant spend of the DRT makes sure
+-- that a malicious operator cannot mount a tx hostage attack where
+-- they hold all the partial signatures but do not broadcast the deposit tx
+-- until after the abort window has passed and then races with the user to spend the DRT.
+-- If this attack succeeds, the deposit may be minted but the graph data would be lost.
+processDepositRequestSpend state confirmedTx = case state of
+    Created{..}
+        | chkUserSpend depositRequestOutPoint confirmedTx ->
+            Aborted{..}
+    GraphGenerated{..}
+        | chkUserSpend depositRequestOutPoint confirmedTx ->
+            Aborted{..}
+    DepositNoncesCollected{..}
+        | chkUserSpend depositRequestOutPoint confirmedTx ->
+            Aborted{..}
+    DepositPartialsCollected{..}
+        | chkUserSpend depositRequestOutPoint confirmedTx ->
+            Aborted{..}
     _ -> error "Invalid state transition"
 
 -- Introspection functions
