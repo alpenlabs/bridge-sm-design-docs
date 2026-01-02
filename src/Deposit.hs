@@ -451,3 +451,9 @@ processDepositSpend state confirmedTx = case state of
 hasCooperativePayoutFailed :: DepositState -> Bool
 hasCooperativePayoutFailed CooperativePathFailed{} = True
 hasCooperativePayoutFailed _ = False
+
+lastProcessedBlock :: DepositState -> Maybe BitcoinBlockHeight
+lastProcessedBlock state = case state of
+    Aborted{} -> Nothing
+    Spent{} -> Nothing
+    otherState -> Just (blockHeight otherState)
