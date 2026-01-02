@@ -15,6 +15,7 @@ module Stake (
   isAvailable,
   isUnstaked,
   getPreimage,
+  lastProcessedBlock,
 ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
@@ -57,31 +58,37 @@ maxGameDuration = 3024 -- maximum duration (in Bitcoin blocks) for the withdrawa
 data StakeState
   = Created -- state where the state has been initialized (must happen at genesis/setup)
       { operatorIdx :: OperatorIdx -- index of the operator who owns the stake
+      , blockHeight :: BitcoinBlockHeight -- the height of the last Bitcoin block observed by this state machine
       }
   | StakeGraphGenerated -- state where the data required to generate the entire graph has been generated/received
       { operatorIdx :: OperatorIdx
+      , blockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData -- data required to construct a stake transaction
       , nonces :: Map.Map OperatorIdx (NonEmpty PubNonce) -- nonces collected from operators for MuSig2 signing (flattened)
       }
   | UnstakingNoncesCollected -- state where the nonces required to sign the unstaking transactions have been collected
       { operatorIdx :: OperatorIdx
+      , blockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , aggNonces :: NonEmpty AggNonce -- aggregated nonces for the unstaking transaction
       , partials :: Map.Map OperatorIdx (NonEmpty PartialSig) -- partial signatures collected from operators (flattened)
       }
   | UnstakingSigned -- state where the unstaking transactions have been signed
       { operatorIdx :: OperatorIdx
+      , blockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , expectedStakeTxid :: Txid -- the expected txid of the staking transaction (this can be kept in state or computed on the fly)
       , signatures :: NonEmpty Signature -- aggregated signatures for the unstaking transactions (flattened)
       }
   | Confirmed -- state where the stake transaction has been confirmed on-chain
       { operatorIdx :: OperatorIdx
+      , blockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , stakeTxid :: Txid -- the txid of the confirmed staking transaction (this can be kept in state or computed on the fly)
       }
   | PreimageRevealed -- state where the unstaking preimage has been revealed via the unstaking intent transaction posted on-chain
       { operatorIdx :: OperatorIdx
+      , blockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , preimage :: Preimage -- the unstaking preimage revealed by the operator
       , unstakingIntentBlockHeight :: BitcoinBlockHeight -- the block height at which the unstaking intent transaction was confirmed
@@ -230,9 +237,10 @@ processUnstaking state _ = (state, emptyOutput)
 notifyNewBlock state@PreimageRevealed{..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + maxGameDuration =
       let output = StakeTransitionOutput{duty = Just PublishUnstakingTx{stakeData = stakeData}}
-       in (state, output)
-  | otherwise = (PreimageRevealed{..}, emptyOutput)
-notifyNewBlock state _ = (state, emptyOutput)
+       in (state{blockHeight = btcBlockHeight}, output)
+  | otherwise = (PreimageRevealed{blockHeight = btcBlockHeight, ..}, emptyOutput)
+notifyNewBlock state@Unstaked{} _ = (state, emptyOutput) -- does not need any more updates
+notifyNewBlock state btcBlockHeight = (state{blockHeight = btcBlockHeight}, emptyOutput)
 
 -- Introspection Functions
 isAvailable :: StakeState -> Bool
@@ -252,3 +260,8 @@ getPreimage :: StakeState -> Maybe Preimage
 getPreimage PreimageRevealed{..} = Just preimage
 getPreimage Unstaked{..} = Just preimage
 getPreimage _ = Nothing
+
+lastProcessedBlock :: StakeState -> Maybe BitcoinBlockHeight
+lastProcessedBlock state = case state of
+  Unstaked{} -> Nothing
+  _ -> Just (blockHeight state)
