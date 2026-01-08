@@ -132,6 +132,16 @@ opCardinality cfg = Set.size (operators cfg)
 povIdx :: OperatorTable -> OperatorIdx
 povIdx _cfg = 0 -- placeholder implementation
 
+-- Placeholder verification for partial signatures
+verifyPartialSig :: OperatorTable -> OperatorIdx -> PartialSignature -> Bool
+verifyPartialSig _opTable _operatorIdx _partialSig =
+  True -- Placeholder: accept all signatures for now
+
+-- Helper to verify all partials in a collection
+verifyAllPartials :: OperatorTable -> OperatorIdx -> NonEmpty PartialSignature -> Bool
+verifyAllPartials opTable opIdx partials =
+  all (verifyPartialSig opTable opIdx) (NonEmpty.toList partials)
+
 -- State
 -- This represents the state of any pegout graph associated with a particular deposit.
 -- Each graph is uniquely identified by the two-tuple (depositIdx, operatorIdx)
@@ -485,7 +495,10 @@ processNonces state _ _ = error $ "Invalid state for nonces: " ++ show state
 processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
   let newPartials =
         if isNothing (Map.lookup opIdx partials)
-          then Map.insert opIdx receivedPartials partials
+          then
+            if verifyAllPartials execConfig opIdx receivedPartials
+              then Map.insert opIdx receivedPartials partials
+              else error $ "Partial Signature Verification Failed for Operator: " ++ show opIdx
           else partials -- ignore duplicate partials from same operator
       expectedOperatorCount = opCardinality execConfig
   in  if Map.size newPartials == expectedOperatorCount
