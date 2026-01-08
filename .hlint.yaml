@@ -1,0 +1,40 @@
+# HLint configuration for bridge-sm
+# See https://github.com/ndmitchell/hlint for documentation
+
+# Default arguments passed to HLint
+- arguments: []
+
+# Ignore specific suggestions that are not appropriate for this project
+- ignore:
+    name: "Use newtype instead of data"
+    # Project uses many single-constructor data types for specification clarity
+
+- ignore:
+    name: "Redundant bracket"
+    within:
+      - "*.hs"
+    # RecordWildCards extension often requires brackets for clarity
+
+# Enable standard warnings
+- warn: {name: Redundant do}
+- warn: {name: Use camelCase}
+- warn: {name: Eta reduce}
+
+# Module-specific rules
+- modules:
+    # Recommend qualified imports for common types
+    - {name: Data.Set, as: Set}
+    - {name: Data.Map, as: Map}
+
+# Group configuration
+- group:
+    name: default
+    enabled: true
+    imports:
+      - package base
+
+# Hint for placeholder implementations (don't warn about undefined/error in specs)
+- ignore:
+    name: "Evaluate"
+    within:
+      - "*.hs"

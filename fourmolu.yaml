@@ -1,0 +1,52 @@
+# Fourmolu configuration for bridge-sm
+# See https://github.com/fourmolu/fourmolu for full documentation
+
+# Number of spaces per indentation step
+indentation: 2
+
+# How to place arrows in function types
+# Options: trailing, leading, leading-args
+function-arrows: leading
+
+# How to place commas in multi-line lists
+# Options: leading, trailing
+comma-style: leading
+
+# How to format import/export lists
+# Options: leading, trailing, diff-friendly
+import-export-style: leading
+
+# Whether to indent 'where' bindings
+indent-wheres: true
+
+# Whether to add a space after record braces
+record-brace-space: true
+
+# Number of newlines between top-level declarations
+newlines-between-decls: 1
+
+# Be respectful of user choices when multiple styles are valid
+respectful: true
+
+# Haddock comment style
+# Options: single-line, multi-line, multi-line-compact
+haddock-style: multi-line
+
+# How to format let expressions
+# Options: auto, inline, newline, mixed
+let-style: inline
+
+# How to align 'in' keyword
+# Options: right-align, left-align, no-space
+in-style: left-align
+
+# Whether to use unicode syntax
+# Options: detect, always, never
+unicode: never
+
+# Maximum line length
+column-limit: 120
+
+# Whether to use parentheses for single constraints
+# Options: auto, always, never
+single-constraint-parens: auto

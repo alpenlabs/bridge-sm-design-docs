@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+# Cancel outdated runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ghc: ['9.10.1']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: 'latest'
+
+      - name: Configure Cabal
+        run: |
+          cabal configure --enable-tests --test-show-details=direct
+          cabal update
+
+      - name: Cache Cabal dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.setup.outputs.cabal-store }}
+            dist-newstyle
+          key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('**/*.cabal', 'cabal.project', 'cabal.project.freeze') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-${{ matrix.ghc }}-
+
+      - name: Install dependencies
+        run: cabal build --only-dependencies all
+
+      - name: Build
+        run: cabal build all
+
+  hlint:
+    name: HLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.10.1'
+          cabal-version: 'latest'
+
+      - name: Cache HLint
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/bin/hlint
+          key: hlint-${{ runner.os }}-${{ hashFiles('.hlint.yaml') }}
+
+      - name: Install HLint
+        run: |
+          if [ ! -f ~/.cabal/bin/hlint ]; then
+            cabal install hlint --install-method=copy --installdir=$HOME/.cabal/bin
+          fi
+          echo "$HOME/.cabal/bin" >> $GITHUB_PATH
+
+      - name: Run HLint
+        run: hlint src/ test/ --report
+
+  fourmolu:
+    name: Fourmolu Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Fourmolu
+        uses: haskell-actions/run-fourmolu@v11
+        with:
+          version: 'latest'
+          pattern: |
+            src/**/*.hs
+            test/**/*.hs
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        ghc: ['9.10.1']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: 'latest'
+
+      - name: Configure Cabal
+        run: |
+          cabal configure --enable-tests --test-show-details=streaming
+          cabal update
+
+      - name: Cache Cabal dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.setup.outputs.cabal-store }}
+            dist-newstyle
+          key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('**/*.cabal', 'cabal.project', 'cabal.project.freeze') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-${{ matrix.ghc }}-
+
+      - name: Install dependencies
+        run: cabal build --only-dependencies all
+
+      - name: Run tests
+        run: cabal test all --test-show-details=streaming
