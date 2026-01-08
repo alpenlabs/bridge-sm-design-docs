@@ -438,11 +438,16 @@ notifyNewBlock height state = state{blockHeight = height}
 -- It is technically possible to see a spend before all the payout partials have been collected
 -- this can happen if the assignee withholds their partial signature
 -- and just broadcasts the cooperative payout tx directly.
+-- Similarly, it is also possible that a spend is seen after we progress to a `CooperativePathFailed` state
+-- since each operator may observe the spend at different times and because the timeout for cooperative payout is different for different operators.
 processDepositSpend state confirmedTx = case state of
     PayoutPartialsCollected{..}
         | depositOutPoint `elem` inpoints confirmedTx ->
             Spent{payoutTxid = txid confirmedTx, ..}
     PayoutNoncesCollected{..}
+        | depositOutPoint `elem` inpoints confirmedTx ->
+            Spent{payoutTxid = txid confirmedTx, ..}
+    CooperativePathFailed{..}
         | depositOutPoint `elem` inpoints confirmedTx ->
             Spent{payoutTxid = txid confirmedTx, ..}
     _ -> error "Invalid state transition"
