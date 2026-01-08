@@ -148,6 +148,16 @@ data OperatorTable where
 opCardinality :: OperatorTable -> Int
 opCardinality OperatorTable {..} = Set.size operators
 
+-- Placeholder verification for partial signatures
+verifyPartialSig :: OperatorTable -> OperatorIdx -> PartialSig -> Bool
+verifyPartialSig _opTable _operatorIdx _partialSig =
+  True -- Placeholder: accept all signatures for now
+
+-- Helper to verify all partials in a collection
+verifyAllPartials :: OperatorTable -> OperatorIdx -> NonEmpty PartialSig -> Bool
+verifyAllPartials opTable opIdx partials =
+  all (verifyPartialSig opTable opIdx) (NonEmpty.toList partials)
+
 -- State Transition Functions
 -- Functions to handle state transitions based on events
 -- Declarations
@@ -189,7 +199,10 @@ processUnstakingNonces state _ _ _ = error $ "Invalid state for collecting unsta
 processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' partialSig =
   let updatedPartials =
         if isNothing $ Map.lookup operatorIdx' partials
-          then Map.insert operatorIdx' partialSig partials
+          then
+            if verifyAllPartials opTable operatorIdx' partialSig
+              then Map.insert operatorIdx' partialSig partials
+              else error $ "Partial Signature Verification Failed for Operator: " ++ show operatorIdx'
           else partials -- Ignore duplicate partial signatures from the same operator
   in  if Map.size updatedPartials == opCardinality opTable
         then
