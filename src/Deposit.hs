@@ -234,7 +234,7 @@ getFulfillWithdrawalDuty _ _ = Nothing
 -- Placeholder verification for partial signatures
 verifyPartialSig :: ExecConfig -> OperatorIdx -> PartialSignature -> Bool
 verifyPartialSig _cfg _operatorIdx _partialSig =
-    True -- Placeholder: accept all signatures for now
+  True -- Placeholder: accept all signatures for now
 
 -- Numeric constants (params)
 -- abort window
@@ -276,61 +276,61 @@ processGraphGenerated deposit@Created {..} _cfg operatorIdx =
   in  (newState, Nothing)
 processGraphGenerated state _ _ = (state, Nothing) -- do nothing if the state has already progressed
 
-processNonce deposit@GraphGenerated{..} cfg nonce operatorIdx =
-    case Map.lookup operatorIdx pubnonces of
-        Just _ ->
-             -- Ignore incoming Nonce if the operator's Nonce has already been received
-            (deposit, Nothing)
-        Nothing ->
-              let newNonces = Map.insert operatorIdx nonce pubnonces
-                  (newState, duty) =
-                      if Map.size newNonces == opCardinality cfg
-                          then
-                              let aggNonce = "agg_nonce_placeholder" -- Placeholder for actual aggregation logic
-                                  newState' =
-                                      DepositNoncesCollected
-                                          { aggNonce = aggNonce
-                                          , partialSignatures = mempty
-                                          , ..
-                                          }
-                                  duty' =
-                                      Just
-                                          PublishDepositPartials
-                                              { depositOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
-                                              , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
-                                              , depositAggNonce = aggNonce
-                                              }
-                               in (newState', duty')
-                          else
-                              (deposit{pubnonces = newNonces}, Nothing)
-               in (newState, duty)
+processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
+  case Map.lookup operatorIdx pubnonces of
+    Just _ ->
+      -- Ignore incoming Nonce if the operator's Nonce has already been received
+      (deposit, Nothing)
+    Nothing ->
+      let newNonces = Map.insert operatorIdx nonce pubnonces
+          (newState, duty) =
+            if Map.size newNonces == opCardinality cfg
+              then
+                let aggNonce = "agg_nonce_placeholder" -- Placeholder for actual aggregation logic
+                    newState' =
+                      DepositNoncesCollected
+                        { aggNonce = aggNonce
+                        , partialSignatures = mempty
+                        , ..
+                        }
+                    duty' =
+                      Just
+                        PublishDepositPartials
+                          { depositOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
+                          , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
+                          , depositAggNonce = aggNonce
+                          }
+                in  (newState', duty')
+              else
+                (deposit {pubnonces = newNonces}, Nothing)
+      in  (newState, duty)
 processNonce _ _ _ _ = error "Invalid state transition"
 
-processPartial deposit@DepositNoncesCollected{..} cfg partialSig operatorIdx =
-    case Map.lookup operatorIdx partialSignatures of
-        Just _ ->
-            -- Ignore incoming PartialSignature if some PartialSignature from the same operator has been received before
-            (deposit, Nothing)
-        Nothing ->
-            if verifyPartialSig cfg operatorIdx partialSig 
-                then
-                    let newPartials = Map.insert operatorIdx partialSig partialSignatures
-                        (newState, duty) =
-                            if Map.size newPartials == opCardinality cfg
-                                then
-                                    let aggSignature = "agg_signature_placeholder" -- Placeholder for actual aggregation logic
-                                        newState' =
-                                            DepositPartialsCollected
-                                                { aggSignature = aggSignature
-                                                , ..
-                                                }
-                                        duty' = Just PublishDeposit{depositTx = depositTransaction, aggSignature = aggSignature}
-                                     in (newState', duty')
-                                else
-                                    (deposit{partialSignatures = newPartials}, Nothing)
-                     in (newState, duty)
-                else
-                   error "Partial Signature Verification Failed"
+processPartial deposit@DepositNoncesCollected {..} cfg partialSig operatorIdx =
+  case Map.lookup operatorIdx partialSignatures of
+    Just _ ->
+      -- Ignore incoming PartialSignature if some PartialSignature from the same operator has been received before
+      (deposit, Nothing)
+    Nothing ->
+      if verifyPartialSig cfg operatorIdx partialSig
+        then
+          let newPartials = Map.insert operatorIdx partialSig partialSignatures
+              (newState, duty) =
+                if Map.size newPartials == opCardinality cfg
+                  then
+                    let aggSignature = "agg_signature_placeholder" -- Placeholder for actual aggregation logic
+                        newState' =
+                          DepositPartialsCollected
+                            { aggSignature = aggSignature
+                            , ..
+                            }
+                        duty' = Just PublishDeposit {depositTx = depositTransaction, aggSignature = aggSignature}
+                    in  (newState', duty')
+                  else
+                    (deposit {partialSignatures = newPartials}, Nothing)
+          in  (newState, duty)
+        else
+          error "Partial Signature Verification Failed"
 processPartial _ _ _ _ = error "Invalid state transition"
 
 processDepositConfirmation DepositPartialsCollected {..} confirmedTx =
@@ -395,68 +395,68 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
   in  (newState, duty)
 processFulfillment _ _ _ _ = error "Invalid state transition"
 
-processPayoutNonce deposit@Fulfilled{..} cfg nonce operatorIdx =
-    case Map.lookup operatorIdx payoutNonces of
-        Just _ ->
-             -- Ignore incoming Nonce if the operator's Nonce has already been received
-            (deposit, Nothing)
-        Nothing ->
-              let newPayoutNonces = Map.insert operatorIdx nonce payoutNonces
-                  (newState, duty) =
-                      if Map.size newPayoutNonces == opCardinality cfg
-                          then
-                              let aggNonce = "payout_agg_nonce_placeholder" -- Placeholder for actual aggregation logic
-                                  newState' =
-                                      PayoutNoncesCollected
-                                          { payoutAggNonce = aggNonce
-                                          , payoutPartialSignatures = mempty
-                                          , payoutOutputDesc = case operatorDesc of
-                                              Just desc -> desc
-                                              Nothing -> error "Operator descriptor must be set before collecting payout pubnonces"
-                                          , ..
-                                          }
-                                  duty' = Just PublishPayoutPartial{depositOutPoint = depositOutPoint, depositIdx = depositIdx, aggNonce = aggNonce}
-                               in (newState', duty')
-                          else
-                              (deposit{payoutNonces = newPayoutNonces}, Nothing)
-               in (newState, duty)
+processPayoutNonce deposit@Fulfilled {..} cfg nonce operatorIdx =
+  case Map.lookup operatorIdx payoutNonces of
+    Just _ ->
+      -- Ignore incoming Nonce if the operator's Nonce has already been received
+      (deposit, Nothing)
+    Nothing ->
+      let newPayoutNonces = Map.insert operatorIdx nonce payoutNonces
+          (newState, duty) =
+            if Map.size newPayoutNonces == opCardinality cfg
+              then
+                let aggNonce = "payout_agg_nonce_placeholder" -- Placeholder for actual aggregation logic
+                    newState' =
+                      PayoutNoncesCollected
+                        { payoutAggNonce = aggNonce
+                        , payoutPartialSignatures = mempty
+                        , payoutOutputDesc = case operatorDesc of
+                            Just desc -> desc
+                            Nothing -> error "Operator descriptor must be set before collecting payout pubnonces"
+                        , ..
+                        }
+                    duty' = Just PublishPayoutPartial {depositOutPoint = depositOutPoint, depositIdx = depositIdx, aggNonce = aggNonce}
+                in  (newState', duty')
+              else
+                (deposit {payoutNonces = newPayoutNonces}, Nothing)
+      in  (newState, duty)
 processPayoutNonce _ _ _ _ = error "Invalid state transition"
 
-processPayoutPartial deposit@PayoutNoncesCollected{..} cfg partialSig operatorIdx =
-    case Map.lookup operatorIdx payoutPartialSignatures of
-        Just _ ->
-            -- Ignore incoming PartialSignature if some PartialSignature fromt the same operator has been received before
-            (deposit, Nothing)
-        Nothing ->
-            if verifyPartialSig cfg operatorIdx partialSig
-                then
-                    let newPartials = Map.insert operatorIdx partialSig payoutPartialSignatures
-                        (newState, duty) =
-                            if Map.size newPartials == opCardinality cfg
-                                then
-                                    let aggSignature = "payout_agg_signature_placeholder" -- Placeholder for actual aggregation logic;
-                                    -- Placeholder for actual payout transaction id
-                                    -- this is needed for book-keeping purposes so that any spend of the deposit
-                                    -- can be associated with the expected payout in the cooperative path.
-                                        payoutTxid = "payout_txid_placeholder"
-                                        newState' =
-                                            PayoutPartialsCollected
-                                                { payoutAggSignature = aggSignature
-                                                , payoutTxid = payoutTxid
-                                                , ..
-                                                }
-                                        duty' =
-                                            Just
-                                                PublishPayout
-                                                    { payoutTx = "payout_transaction_placeholder" -- Placeholder for actual payout transaction
-                                                    , ..
-                                                    }
-                                     in (newState', duty')
-                                else
-                                    (deposit{payoutPartialSignatures = newPartials}, Nothing)
-                     in (newState, duty)
-                else
-                  error "Partial Signature Verification Failed" 
+processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorIdx =
+  case Map.lookup operatorIdx payoutPartialSignatures of
+    Just _ ->
+      -- Ignore incoming PartialSignature if some PartialSignature fromt the same operator has been received before
+      (deposit, Nothing)
+    Nothing ->
+      if verifyPartialSig cfg operatorIdx partialSig
+        then
+          let newPartials = Map.insert operatorIdx partialSig payoutPartialSignatures
+              (newState, duty) =
+                if Map.size newPartials == opCardinality cfg
+                  then
+                    let aggSignature = "payout_agg_signature_placeholder" -- Placeholder for actual aggregation logic;
+                    -- Placeholder for actual payout transaction id
+                    -- this is needed for book-keeping purposes so that any spend of the deposit
+                    -- can be associated with the expected payout in the cooperative path.
+                        payoutTxid = "payout_txid_placeholder"
+                        newState' =
+                          PayoutPartialsCollected
+                            { payoutAggSignature = aggSignature
+                            , payoutTxid = payoutTxid
+                            , ..
+                            }
+                        duty' =
+                          Just
+                            PublishPayout
+                              { payoutTx = "payout_transaction_placeholder" -- Placeholder for actual payout transaction
+                              , ..
+                              }
+                    in  (newState', duty')
+                  else
+                    (deposit {payoutPartialSignatures = newPartials}, Nothing)
+          in  (newState, duty)
+        else
+          error "Partial Signature Verification Failed"
 processPayoutPartial _ _ _ _ = error "Invalid state transition"
 
 -- Processes information about new blocks and applies any updates related to block height timeouts
