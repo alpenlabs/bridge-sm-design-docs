@@ -1,11 +1,11 @@
-module Operator (
-  OperatorState,
-  updateOperatorTable,
-  notifyNewBlock,
-  getCurrentOperatorTable,
-  getMasterOperatorTable,
-  getPendingUpdates,
-) where
+module Operator
+  ( OperatorState
+  , updateOperatorTable
+  , notifyNewBlock
+  , getCurrentOperatorTable
+  , getMasterOperatorTable
+  , getPendingUpdates
+  ) where
 
 -- Prelude
 import Data.Set qualified as Set
@@ -43,7 +43,7 @@ updateOperatorTable curState activationHeight newTable =
       (masterTable, curTable, pendingUpdates) = case curState of
         Ready m c -> (m, c, Set.empty)
         UpdateReceived m c p -> (m, c, p)
-   in UpdateReceived
+  in  UpdateReceived
         (newTable `Set.union` masterTable)
         curTable
         (pendingUpdates `Set.union` newPendingUpdate)

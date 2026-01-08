@@ -3,20 +3,20 @@
 
 {- HLINT ignore "Use newtype instead of data" -}
 
-module Stake (
-  StakeState,
-  processStakeData,
-  processUnstakingNonces,
-  processUnstakingPartials,
-  processStakeConfirmed,
-  processPreimageRevealed,
-  processUnstaking,
-  notifyNewBlock,
-  isAvailable,
-  isUnstaked,
-  getPreimage,
-  lastProcessedBlock,
-) where
+module Stake
+  ( StakeState
+  , processStakeData
+  , processUnstakingNonces
+  , processUnstakingPartials
+  , processStakeConfirmed
+  , processPreimageRevealed
+  , processUnstaking
+  , notifyNewBlock
+  , isAvailable
+  , isUnstaked
+  , getPreimage
+  , lastProcessedBlock
+  ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.List.NonEmpty qualified as NonEmpty
@@ -130,138 +130,140 @@ data StakeTransitionOutput = StakeTransitionOutput
   deriving (Show, Eq)
 
 emptyOutput :: StakeTransitionOutput
-emptyOutput = StakeTransitionOutput{duty = Nothing}
+emptyOutput = StakeTransitionOutput {duty = Nothing}
 
 -- Additional Types and Helpers
 data OperatorTable where
-  OperatorTable ::
-    { operators ::
-        Set.Set
-          ( OperatorIdx
-          , SchnorrKey
-          , P2PKey
-          )
-    } ->
-    OperatorTable
+  OperatorTable
+    :: { operators
+           :: Set.Set
+                ( OperatorIdx
+                , SchnorrKey
+                , P2PKey
+                )
+       }
+    -> OperatorTable
   deriving (Show, Eq)
 
 opCardinality :: OperatorTable -> Int
-opCardinality OperatorTable{..} = Set.size operators
+opCardinality OperatorTable {..} = Set.size operators
 
 -- State Transition Functions
 -- Functions to handle state transitions based on events
 -- Declarations
 processStakeData :: StakeState -> StakeData -> (StakeState, StakeTransitionOutput) -- Created -> StakeGraphGenerated
-processUnstakingNonces :: StakeState -> OperatorTable -> OperatorIdx -> NonEmpty PubNonce -> (StakeState, StakeTransitionOutput) -- StakeGraphGenerated -> UnstakingNoncesCollected
-processUnstakingPartials :: StakeState -> OperatorTable -> OperatorIdx -> NonEmpty PartialSig -> (StakeState, StakeTransitionOutput) -- UnstakingNoncesCollected -> UnstakingSigned
+processUnstakingNonces
+  :: StakeState -> OperatorTable -> OperatorIdx -> NonEmpty PubNonce -> (StakeState, StakeTransitionOutput) -- StakeGraphGenerated -> UnstakingNoncesCollected
+processUnstakingPartials
+  :: StakeState -> OperatorTable -> OperatorIdx -> NonEmpty PartialSig -> (StakeState, StakeTransitionOutput) -- UnstakingNoncesCollected -> UnstakingSigned
 processStakeConfirmed :: StakeState -> Transaction -> (StakeState, StakeTransitionOutput) -- UnstakingSigned -> Confirmed
 processPreimageRevealed :: StakeState -> Transaction -> BitcoinBlockHeight -> (StakeState, StakeTransitionOutput) -- Confirmed -> PreimageRevealed
 processUnstaking :: StakeState -> Transaction -> (StakeState, StakeTransitionOutput) -- PreimageRevealed -> Unstaked
 notifyNewBlock :: StakeState -> BitcoinBlockHeight -> (StakeState, StakeTransitionOutput) -- PreimageRevealed -> PreimageRevealed (with duty to publish unstaking tx)
 -- Definitions
-processStakeData Created{..} stakeData =
-  let newState = StakeGraphGenerated{stakeData = stakeData, nonces = Map.empty, ..}
-      output = StakeTransitionOutput{duty = Just (PublishUnstakingNonces{stakeData = stakeData})}
-   in (newState, output)
-processStakeData StakeGraphGenerated{} _ = error "Stake data has already been processed"
+processStakeData Created {..} stakeData =
+  let newState = StakeGraphGenerated {stakeData = stakeData, nonces = Map.empty, ..}
+      output = StakeTransitionOutput {duty = Just (PublishUnstakingNonces {stakeData = stakeData})}
+  in  (newState, output)
+processStakeData StakeGraphGenerated {} _ = error "Stake data has already been processed"
 processStakeData state _ = error $ "Received stale stake data event in state: " ++ show state
 
-processUnstakingNonces StakeGraphGenerated{..} opTable operatorIdx' pubNonces =
+processUnstakingNonces StakeGraphGenerated {..} opTable operatorIdx' pubNonces =
   let updatedNonces =
         if isNothing $ Map.lookup operatorIdx' nonces
           then Map.insert operatorIdx' pubNonces nonces
           else nonces -- Ignore duplicate nonces from the same operator
-   in if Map.size updatedNonces == opCardinality opTable
+  in  if Map.size updatedNonces == opCardinality opTable
         then
           let aggNonces = "agg_nonce_placeholder" :| [] -- In a real implementation, this would be computed from the collected nonces
-              newState = UnstakingNoncesCollected{aggNonces = aggNonces, partials = Map.empty, ..}
-              output = StakeTransitionOutput{duty = Just (PublishUnstakingPartials{stakeData = stakeData, aggNonces = aggNonces})}
-           in (newState, output)
+              newState = UnstakingNoncesCollected {aggNonces = aggNonces, partials = Map.empty, ..}
+              output = StakeTransitionOutput {duty = Just (PublishUnstakingPartials {stakeData = stakeData, aggNonces = aggNonces})}
+          in  (newState, output)
         else
-          let newState = StakeGraphGenerated{nonces = updatedNonces, ..}
+          let newState = StakeGraphGenerated {nonces = updatedNonces, ..}
               output = emptyOutput
-           in (newState, output)
-processUnstakingNonces UnstakingNoncesCollected{} _ _ _ = error "Unstaking nonces have already been collected"
+          in  (newState, output)
+processUnstakingNonces UnstakingNoncesCollected {} _ _ _ = error "Unstaking nonces have already been collected"
 processUnstakingNonces state _ _ _ = error $ "Invalid state for collecting unstaking nonces: " ++ show state
 
-processUnstakingPartials UnstakingNoncesCollected{..} opTable operatorIdx' partialSig =
+processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' partialSig =
   let updatedPartials =
         if isNothing $ Map.lookup operatorIdx' partials
           then Map.insert operatorIdx' partialSig partials
           else partials -- Ignore duplicate partial signatures from the same operator
-   in if Map.size updatedPartials == opCardinality opTable
+  in  if Map.size updatedPartials == opCardinality opTable
         then
           let signatures = "signature_placeholder" :| [] -- In a real implementation, this would be computed from the collected partial signatures and agg nonce
               expectedStakeTxid = "expected_stake_txid_placeholder" -- In a real implementation, this would be derived from the stake data
-              newState = UnstakingSigned{expectedStakeTxid = expectedStakeTxid, signatures = signatures, ..}
-           in (newState, emptyOutput)
+              newState = UnstakingSigned {expectedStakeTxid = expectedStakeTxid, signatures = signatures, ..}
+          in  (newState, emptyOutput)
         else
-          let newState = UnstakingNoncesCollected{partials = updatedPartials, ..}
-           in (newState, emptyOutput)
-processUnstakingPartials UnstakingSigned{} _ _ _ = error "Unstaking partials have already been collected"
+          let newState = UnstakingNoncesCollected {partials = updatedPartials, ..}
+          in  (newState, emptyOutput)
+processUnstakingPartials UnstakingSigned {} _ _ _ = error "Unstaking partials have already been collected"
 processUnstakingPartials state _ _ _ = error $ "Invalid state for collecting unstaking partials: " ++ show state
 
-processStakeConfirmed UnstakingSigned{..} tx
+processStakeConfirmed UnstakingSigned {..} tx
   | txid tx == expectedStakeTxid =
-      let newState = Confirmed{stakeTxid = expectedStakeTxid, ..}
-          output = StakeTransitionOutput{duty = Nothing}
-       in (newState, output)
+      let newState = Confirmed {stakeTxid = expectedStakeTxid, ..}
+          output = StakeTransitionOutput {duty = Nothing}
+      in  (newState, output)
   | otherwise = error "Unexpected transaction for stake confirmation"
 processStakeConfirmed state _ = (state, emptyOutput)
 
-processPreimageRevealed Confirmed{..} tx btcBlockHeight
+processPreimageRevealed Confirmed {..} tx btcBlockHeight
   | (stakeTxid, 0) == NonEmpty.head (inpoints tx) =
       let revealedPreimage = "preimage" -- In a real implementation, this would be derived from the transaction witness
-       in let newState =
+      in  let newState =
                 PreimageRevealed
                   { preimage = revealedPreimage
                   , unstakingIntentBlockHeight = btcBlockHeight
                   , expectedUnstakingTxid = "expected_unstaking_txid_placeholder" -- In a real implementation, this would be derived from the stake data
                   , ..
                   }
-              output = StakeTransitionOutput{duty = Nothing}
-           in (newState, output)
+              output = StakeTransitionOutput {duty = Nothing}
+          in  (newState, output)
   | otherwise = error "Transaction does not match expected unstaking intent transaction"
-processPreimageRevealed state@PreimageRevealed{} _ _ = (state, emptyOutput)
+processPreimageRevealed state@PreimageRevealed {} _ _ = (state, emptyOutput)
 processPreimageRevealed state _ _ = error $ "Invalid state for preimage revelation: " ++ show state
 
-processUnstaking PreimageRevealed{..} tx
+processUnstaking PreimageRevealed {..} tx
   | txid tx == expectedUnstakingTxid =
-      let newState = Unstaked{unstakingTxid = expectedUnstakingTxid, ..}
-          output = StakeTransitionOutput{duty = Nothing}
-       in (newState, output)
+      let newState = Unstaked {unstakingTxid = expectedUnstakingTxid, ..}
+          output = StakeTransitionOutput {duty = Nothing}
+      in  (newState, output)
   | otherwise = error "Unexpected transaction for unstaking"
-processUnstaking state@Unstaked{} _ = (state, StakeTransitionOutput{duty = Nothing}) -- re-emit the signal if already unstaked to maintain idempotency
+processUnstaking state@Unstaked {} _ = (state, StakeTransitionOutput {duty = Nothing}) -- re-emit the signal if already unstaked to maintain idempotency
 processUnstaking state _ = (state, emptyOutput)
 
-notifyNewBlock state@PreimageRevealed{..} btcBlockHeight
+notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + maxGameDuration =
-      let output = StakeTransitionOutput{duty = Just PublishUnstakingTx{stakeData = stakeData}}
-       in (state{blockHeight = btcBlockHeight}, output)
-  | otherwise = (PreimageRevealed{blockHeight = btcBlockHeight, ..}, emptyOutput)
-notifyNewBlock state@Unstaked{} _ = (state, emptyOutput) -- does not need any more updates
-notifyNewBlock state btcBlockHeight = (state{blockHeight = btcBlockHeight}, emptyOutput)
+      let output = StakeTransitionOutput {duty = Just PublishUnstakingTx {stakeData = stakeData}}
+      in  (state {blockHeight = btcBlockHeight}, output)
+  | otherwise = (PreimageRevealed {blockHeight = btcBlockHeight, ..}, emptyOutput)
+notifyNewBlock state@Unstaked {} _ = (state, emptyOutput) -- does not need any more updates
+notifyNewBlock state btcBlockHeight = (state {blockHeight = btcBlockHeight}, emptyOutput)
 
 -- Introspection Functions
 isAvailable :: StakeState -> Bool
-isAvailable Created{} = False
-isAvailable StakeGraphGenerated{} = False
-isAvailable UnstakingNoncesCollected{} = False
-isAvailable UnstakingSigned{} = False
+isAvailable Created {} = False
+isAvailable StakeGraphGenerated {} = False
+isAvailable UnstakingNoncesCollected {} = False
+isAvailable UnstakingSigned {} = False
 isAvailable _ = True
 
 isUnstaked :: StakeState -> Bool
-isUnstaked Unstaked{} = True
+isUnstaked Unstaked {} = True
 isUnstaked _ = False
 
 -- since the preimage information is static once revealed, any higher-level module needs to extract this information at every block
 -- this is not information that will change over time, so it is not emitted as a signal in response to events
 getPreimage :: StakeState -> Maybe Preimage
-getPreimage PreimageRevealed{..} = Just preimage
-getPreimage Unstaked{..} = Just preimage
+getPreimage PreimageRevealed {..} = Just preimage
+getPreimage Unstaked {..} = Just preimage
 getPreimage _ = Nothing
 
 lastProcessedBlock :: StakeState -> Maybe BitcoinBlockHeight
 lastProcessedBlock state = case state of
-  Unstaked{} -> Nothing
+  Unstaked {} -> Nothing
   _ -> Just (blockHeight state)
