@@ -133,14 +133,22 @@ povIdx :: OperatorTable -> OperatorIdx
 povIdx _cfg = 0 -- placeholder implementation
 
 -- Placeholder verification for partial signatures
-verifyPartialSig :: OperatorTable -> OperatorIdx -> PartialSignature -> Bool
-verifyPartialSig _opTable _operatorIdx _partialSig =
+verifyPartialSig
+  :: OperatorTable -> OperatorIdx -> NonEmpty Nonce -> NonEmpty AggNonce -> NonEmpty Sighash -> PartialSignature -> Bool
+verifyPartialSig _opTable _operatorIdx _nonces _aggNonces _sighashes _partialSig =
   True -- Placeholder: accept all signatures for now
 
 -- Helper to verify all partials in a collection
-verifyAllPartials :: OperatorTable -> OperatorIdx -> NonEmpty PartialSignature -> Bool
-verifyAllPartials opTable opIdx partials =
-  all (verifyPartialSig opTable opIdx) (NonEmpty.toList partials)
+verifyAllPartials
+  :: OperatorTable
+  -> OperatorIdx
+  -> NonEmpty Nonce
+  -> NonEmpty AggNonce
+  -> NonEmpty Sighash
+  -> NonEmpty PartialSignature
+  -> Bool
+verifyAllPartials opTable opIdx opNonces aggNonces sighashes partials =
+  all (verifyPartialSig opTable opIdx opNonces aggNonces sighashes) (NonEmpty.toList partials)
 
 -- State
 -- This represents the state of any pegout graph associated with a particular deposit.
@@ -184,6 +192,7 @@ data GraphState
       , drtBlockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , nonces :: Map OperatorIdx (NonEmpty Nonce)
       , aggNonces :: NonEmpty AggNonce -- aggregated nonces (packed/flattened representation)
       , partials :: Map OperatorIdx (NonEmpty PartialSignature) -- partials from each operator
       }
@@ -465,7 +474,8 @@ processNonces AdaptorsVerified {..} execConfig (opIdx, receivedNonces) =
   in  if Map.size newNonces == expectedOperatorCount
         then
           ( NoncesCollected
-              { aggNonces = NonEmpty.fromList ["agg_nonce_placeholder"] -- Placeholder for agg nonces
+              { nonces = newNonces
+              , aggNonces = NonEmpty.fromList ["agg_nonce_placeholder"] -- Placeholder for agg nonces
               , partials = mempty -- Placeholder for partial signatures collection
               , ..
               }
@@ -493,10 +503,14 @@ processNonces NoncesCollected {} _ _ = error "Nonces already collected"
 processNonces state _ _ = error $ "Invalid state for nonces: " ++ show state
 
 processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
-  let newPartials =
+  let operatorNonces = case Map.lookup opIdx nonces of
+        Just ns -> ns
+        Nothing -> error "Operator nonces not found"
+      sighashes' = NonEmpty.fromList ["sighash_placeholder"] -- Placeholder for sighashes
+      newPartials =
         if isNothing (Map.lookup opIdx partials)
           then
-            if verifyAllPartials execConfig opIdx receivedPartials
+            if verifyAllPartials execConfig opIdx operatorNonces aggNonces sighashes' receivedPartials
               then Map.insert opIdx receivedPartials partials
               else error $ "Partial Signature Verification Failed for Operator: " ++ show opIdx
           else partials -- ignore duplicate partials from same operator

@@ -70,6 +70,7 @@ data StakeState
       { operatorIdx :: OperatorIdx
       , blockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
+      , nonces :: Map.Map OperatorIdx (NonEmpty PubNonce)
       , aggNonces :: NonEmpty AggNonce -- aggregated nonces for the unstaking transaction
       , partials :: Map.Map OperatorIdx (NonEmpty PartialSig) -- partial signatures collected from operators (flattened)
       }
@@ -149,14 +150,16 @@ opCardinality :: OperatorTable -> Int
 opCardinality OperatorTable {..} = Set.size operators
 
 -- Placeholder verification for partial signatures
-verifyPartialSig :: OperatorTable -> OperatorIdx -> PartialSig -> Bool
-verifyPartialSig _opTable _operatorIdx _partialSig =
+-- For real MuSig2 verification, requires: individual nonces, aggregated nonces, and partial signature
+verifyPartialSig :: OperatorTable -> OperatorIdx -> NonEmpty PubNonce -> NonEmpty AggNonce -> PartialSig -> Bool
+verifyPartialSig _opTable _operatorIdx _pubNonces _aggNonces _partialSig =
   True -- Placeholder: accept all signatures for now
 
 -- Helper to verify all partials in a collection
-verifyAllPartials :: OperatorTable -> OperatorIdx -> NonEmpty PartialSig -> Bool
-verifyAllPartials opTable opIdx partials =
-  all (verifyPartialSig opTable opIdx) (NonEmpty.toList partials)
+verifyAllPartials
+  :: OperatorTable -> OperatorIdx -> NonEmpty PubNonce -> NonEmpty AggNonce -> NonEmpty PartialSig -> Bool
+verifyAllPartials opTable opIdx pubNonces aggNonces partials =
+  all (verifyPartialSig opTable opIdx pubNonces aggNonces) (NonEmpty.toList partials)
 
 -- State Transition Functions
 -- Functions to handle state transitions based on events
@@ -186,7 +189,7 @@ processUnstakingNonces StakeGraphGenerated {..} opTable operatorIdx' pubNonces =
   in  if Map.size updatedNonces == opCardinality opTable
         then
           let aggNonces = "agg_nonce_placeholder" :| [] -- In a real implementation, this would be computed from the collected nonces
-              newState = UnstakingNoncesCollected {aggNonces = aggNonces, partials = Map.empty, ..}
+              newState = UnstakingNoncesCollected {nonces = updatedNonces, aggNonces = aggNonces, partials = Map.empty, ..}
               output = StakeTransitionOutput {duty = Just (PublishUnstakingPartials {stakeData = stakeData, aggNonces = aggNonces})}
           in  (newState, output)
         else
@@ -197,10 +200,13 @@ processUnstakingNonces UnstakingNoncesCollected {} _ _ _ = error "Unstaking nonc
 processUnstakingNonces state _ _ _ = error $ "Invalid state for collecting unstaking nonces: " ++ show state
 
 processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' partialSig =
-  let updatedPartials =
+  let operatorNonces = case Map.lookup operatorIdx' nonces of
+        Just ns -> ns
+        Nothing -> error "Operator nonces not found"
+      updatedPartials =
         if isNothing $ Map.lookup operatorIdx' partials
           then
-            if verifyAllPartials opTable operatorIdx' partialSig
+            if verifyAllPartials opTable operatorIdx' operatorNonces aggNonces partialSig
               then Map.insert operatorIdx' partialSig partials
               else error $ "Partial Signature Verification Failed for Operator: " ++ show operatorIdx'
           else partials -- Ignore duplicate partial signatures from the same operator
