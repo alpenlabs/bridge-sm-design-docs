@@ -834,6 +834,10 @@ mkSlashOutput state =
     , duty = Just PublishSlash {slashTx = "slash_tx_placeholder"} -- Placeholder for slash transaction
     }
 
+-- check if the block is new
+notifyNewBlock state _opTable newBlockHeight
+  | isJust (lastProcessedBlock state) && fromJust (lastProcessedBlock state) >= newBlockHeight =
+      error "Rejecting already processed block"
 -- check if uncontested payout is possible
 notifyNewBlock curState@Claimed {..} _opTable newBlockHeight
   | newBlockHeight > claimBlockHeight + contestTimeout =
@@ -909,9 +913,9 @@ notifyNewBlock curState _opTable newBlockHeight = case curState of
     | newBlockHeight > contestBlockHeight + payoutTimeout ->
         (curState {blockHeight = newBlockHeight}, mkSlashOutput curState)
   -- The next three states should not need any further updates
-  Slashed {} -> (curState, emptyOutput)
-  Withdrawn {} -> (curState, emptyOutput)
-  Aborted {} -> (curState, emptyOutput)
+  Slashed {} -> error "No more updates required"
+  Withdrawn {} -> error "No more updates required"
+  Aborted {} -> error "No more updates required"
   _ -> (curState {blockHeight = newBlockHeight}, emptyOutput)
 
 -- Introspection Functions

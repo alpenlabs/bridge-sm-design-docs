@@ -21,7 +21,7 @@ module Stake
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map qualified as Map
-import Data.Maybe (isNothing)
+import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Set qualified as Set
 import Data.Word (Word32)
 
@@ -236,6 +236,9 @@ processUnstaking PreimageRevealed {..} tx
 processUnstaking state@Unstaked {} _ = (state, StakeTransitionOutput {duty = Nothing}) -- re-emit the signal if already unstaked to maintain idempotency
 processUnstaking state _ = (state, emptyOutput)
 
+notifyNewBlock state newHeight
+  | isJust (lastProcessedBlock state) && fromJust (lastProcessedBlock state) > newHeight =
+      error "Rejecting already processed block height"
 notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + maxGameDuration =
       let output = StakeTransitionOutput {duty = Just PublishUnstakingTx {stakeData = stakeData}}

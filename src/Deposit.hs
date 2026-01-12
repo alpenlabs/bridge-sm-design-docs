@@ -430,12 +430,18 @@ processPayoutPartial _ _ _ _ = error "Invalid state transition"
 notifyNewBlock height Fulfilled {..}
   | height > fulfillmentBlockHeight + cooperativePayoutWindow =
       CooperativePathFailed {..}
+  | height <= blockHeight =
+      error "Rejecting already processed block"
 notifyNewBlock height PayoutNoncesCollected {..}
   | height > fulfillmentBlockHeight + cooperativePayoutWindow =
       CooperativePathFailed {..}
-notifyNewBlock _ state@Aborted {} = state -- does not need any more updates
-notifyNewBlock _ state@Spent {} = state -- does not need any more updates
-notifyNewBlock height state = state {blockHeight = height}
+  | height <= blockHeight =
+      error "Rejecting already processed block"
+notifyNewBlock _ Aborted {} = error "No more updates required" -- does not need any more updates
+notifyNewBlock _ Spent {} = error "No more updates required" -- does not need any more updates
+notifyNewBlock newHeight state = case lastProcessedBlock state of
+  Just h | newHeight > h -> state {blockHeight = newHeight}
+  _ -> error "Rejecting already processed block"
 
 -- Handles both PayoutPartialsCollected and PayoutNoncesCollected states
 -- It is technically possible to see a spend before all the payout partials have been collected
