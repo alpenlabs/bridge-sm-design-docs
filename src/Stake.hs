@@ -256,7 +256,7 @@ processUnstaking state@Unstaked {} _ = (state, StakeTransitionOutput {duty = Not
 processUnstaking state _ = (state, emptyOutput)
 
 notifyNewBlock state newHeight
-  | isJust (lastProcessedBlock state) && fromJust (lastProcessedBlock state) > newHeight =
+  | isJust (lastProcessedBlock state) && fromJust (lastProcessedBlock state) >= newHeight =
       error "Rejecting already processed block height"
 notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + maxGameDuration =
