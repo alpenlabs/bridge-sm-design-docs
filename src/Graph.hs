@@ -469,7 +469,7 @@ processNonces AdaptorsVerified {..} execConfig (opIdx, receivedNonces) =
   let newNonces =
         if isNothing (Map.lookup opIdx nonces)
           then Map.insert opIdx receivedNonces nonces
-          else nonces -- ignore duplicate nonces from same operator
+          else error $ "Duplicate nonces received from operator: " ++ show opIdx
       expectedOperatorCount = opCardinality execConfig
   in  if Map.size newNonces == expectedOperatorCount
         then
@@ -513,7 +513,7 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
             if verifyAllPartials execConfig opIdx operatorNonces aggNonces sighashes' receivedPartials
               then Map.insert opIdx receivedPartials partials
               else error $ "Partial Signature Verification Failed for Operator: " ++ show opIdx
-          else partials -- ignore duplicate partials from same operator
+          else error $ "Duplicate partial signatures received from operator: " ++ show opIdx
       expectedOperatorCount = opCardinality execConfig
   in  if Map.size newPartials == expectedOperatorCount
         then
