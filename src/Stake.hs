@@ -185,7 +185,7 @@ processUnstakingNonces StakeGraphGenerated {..} opTable operatorIdx' pubNonces =
   let updatedNonces =
         if isNothing $ Map.lookup operatorIdx' nonces
           then Map.insert operatorIdx' pubNonces nonces
-          else nonces -- Ignore duplicate nonces from the same operator
+          else error $ "Duplicate unstaking nonces received from operator: " ++ show operatorIdx'
   in  if Map.size updatedNonces == opCardinality opTable
         then
           let aggNonces = "agg_nonce_placeholder" :| [] -- In a real implementation, this would be computed from the collected nonces
@@ -209,7 +209,7 @@ processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' part
             if verifyAllPartials opTable operatorIdx' operatorNonces aggNonces partialSig
               then Map.insert operatorIdx' partialSig partials
               else error $ "Partial Signature Verification Failed for Operator: " ++ show operatorIdx'
-          else partials -- Ignore duplicate partial signatures from the same operator
+          else error $ "Duplicate unstaking partial signatures received from operator: " ++ show operatorIdx'
   in  if Map.size updatedPartials == opCardinality opTable
         then
           let signatures = "signature_placeholder" :| [] -- In a real implementation, this would be computed from the collected partial signatures and agg nonce

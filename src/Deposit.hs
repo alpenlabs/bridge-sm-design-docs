@@ -281,8 +281,7 @@ processGraphGenerated state _ _ = (state, Nothing) -- do nothing if the state ha
 processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx pubnonces of
     Just _ ->
-      -- Ignore incoming Nonce if the operator's Nonce has already been received
-      (deposit, Nothing)
+      error $ "Duplicate nonce received from operator: " ++ show operatorIdx
     Nothing ->
       let newNonces = Map.insert operatorIdx nonce pubnonces
           (newState, duty) =
@@ -312,8 +311,7 @@ processNonce _ _ _ _ = error "Invalid state transition"
 processPartial deposit@DepositNoncesCollected {..} cfg partialSig operatorIdx =
   case Map.lookup operatorIdx partialSignatures of
     Just _ ->
-      -- Ignore incoming PartialSignature if some PartialSignature from the same operator has been received before
-      (deposit, Nothing)
+      error $ "Duplicate partial signature received from operator: " ++ show operatorIdx
     Nothing ->
       let operatorNonce = case Map.lookup operatorIdx pubnonces of
             Just nonce -> nonce
@@ -405,8 +403,7 @@ processFulfillment _ _ _ _ = error "Invalid state transition"
 processPayoutNonce deposit@Fulfilled {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx payoutNonces of
     Just _ ->
-      -- Ignore incoming Nonce if the operator's Nonce has already been received
-      (deposit, Nothing)
+      error $ "Duplicate payout nonce received from operator: " ++ show operatorIdx
     Nothing ->
       let newPayoutNonces = Map.insert operatorIdx nonce payoutNonces
           (newState, duty) =
@@ -433,8 +430,7 @@ processPayoutNonce _ _ _ _ = error "Invalid state transition"
 processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorIdx =
   case Map.lookup operatorIdx payoutPartialSignatures of
     Just _ ->
-      -- Ignore incoming PartialSignature if some PartialSignature fromt the same operator has been received before
-      (deposit, Nothing)
+      error $ "Duplicate payout partial signature received from operator: " ++ show operatorIdx
     Nothing ->
       let operatorNonce = case Map.lookup operatorIdx payoutNonces of
             Just nonce -> nonce
