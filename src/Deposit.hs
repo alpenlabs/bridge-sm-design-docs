@@ -193,7 +193,7 @@ data DepositDuty
     RequestPayoutNonce
       { depositIdx :: DepositIdx
       }
-  | PublishPayoutNonce -- publish the nonce for spending the deposit utxo cooperatively
+  | PublishPayoutNonces -- publish the nonce for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
       , operatorIdx :: OperatorIdx -- the index of the operator requesting cooperation for payout (could be the same as this operator)
       , operatorDesc :: BtcDescriptor -- descriptor of the operator to receive payout
