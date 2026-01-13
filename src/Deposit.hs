@@ -116,7 +116,16 @@ data DepositState
       , fulfillmentTxid :: Txid -- txid of the fulfillment transaction (fronting the user)
       , fulfillmentBlockHeight :: BitcoinBlockHeight -- block height where the fulfillment transaction was confirmed
       , cooperativePayoutDeadline :: BitcoinBlockHeight -- block height by which the cooperative payout must be completed
-      , operatorDesc :: Maybe BtcDescriptor -- the output descriptor of the operator for the cooperative payout (needs to be provided by the recipient, only set once)
+      }
+  | PayoutDescriptorReceived -- The descriptor of the operator for the cooperative payout has been received
+      { depositIdx :: U32
+      , blockHeight :: U32
+      , depositOutPoint :: OutPoint
+      , assignee :: OperatorIdx
+      , fulfillmentTxid :: Txid -- txid of the fulfillment transaction (fronting the user)
+      , fulfillmentBlockHeight :: BitcoinBlockHeight -- block height where the fulfillment transaction was confirmed
+      , cooperativePayoutDeadline :: BitcoinBlockHeight
+      , operatorDesc :: BtcDescriptor -- the output descriptor of the operator for the cooperative payout (needs to be provided by the recipient)
       , payoutNonces :: Map.Map OperatorIdx PubNonce -- pubnonces required to sign the cooperative payout transaction (per operator)
       }
   | PayoutNoncesCollected -- All pubnonces have been collected for cooperative payout
@@ -124,8 +133,8 @@ data DepositState
       , blockHeight :: U32
       , depositOutPoint :: OutPoint
       , assignee :: OperatorIdx -- required to pass onto the `CooperativeFailed` state from where a graph can be assigned
-      , fulfillmentTxid :: Txid -- do --
-      , fulfillmentBlockHeight :: BitcoinBlockHeight -- do --
+      , fulfillmentTxid :: Txid -- txid of the fulfillment transaction (fronting the user)
+      , fulfillmentBlockHeight :: BitcoinBlockHeight -- block height where the fulfillment transaction was confirmed
       , payoutOutputDesc :: BtcDescriptor
       , cooperativePayoutDeadline :: BitcoinBlockHeight
       , payoutNonces :: Map.Map OperatorIdx PubNonce
@@ -177,12 +186,16 @@ data DepositDuty
       , deadline :: BitcoinBlockHeight
       , recipientDesc :: BtcDescriptor -- the user's descriptor where funds are to be sent by the operator
       }
-  | -- request pubnonces from *all* operators for cooperative payout (this duty execution will generate the operator's descriptor which will then be stored in state)
-    -- only the assignee creates this duty
+  | -- publish the operator's descriptor.
+    --  this duty execution will generate the operator's descriptor which will then be stored in state)
     -- the assignee will also request *themselves* since getting a new descriptor from a wallet is a side-effect and has to be done inside a duty context
-    RequestPayoutNonce
+    PublishPayoutDescriptor
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
-      , depositIdx :: DepositIdx
+      }
+  | -- request pubnonces from *all* operators for cooperative payout
+    -- only the assignee creates this duty
+    RequestPayoutNonce
+      { depositIdx :: DepositIdx
       }
   | PublishPayoutNonce -- publish the nonce for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
@@ -257,6 +270,7 @@ processAssignment
   :: DepositState -> ExecConfig -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processFulfillment
   :: DepositState -> ExecConfig -> Transaction -> BitcoinBlockHeight -> (DepositState, Maybe DepositDuty)
+processPayoutDescriptor :: DepositState -> ExecConfig -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial
   :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
@@ -389,18 +403,30 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
           { fulfillmentTxid = txid fulfillmentTx
           , fulfillmentBlockHeight = fulfillmentBlockHeight
           , cooperativePayoutDeadline = fulfillmentBlockHeight + cooperativePayoutWindow
-          , operatorDesc = Nothing -- to be set when payout pubnonces are requested and a descriptor is provided in the request
+          , ..
+          }
+      duty =
+        if assignee == povIdx cfg
+          then Just PublishPayoutDescriptor {depositOutPoint = depositOutPoint}
+          else Nothing
+  in  (newState, duty)
+processFulfillment _ _ _ _ = error "Invalid state transition"
+
+processPayoutDescriptor Fulfilled {..} cfg operatorDesc =
+  let newState =
+        PayoutDescriptorReceived
+          { operatorDesc = operatorDesc
           , payoutNonces = mempty
           , ..
           }
       duty =
         if assignee == povIdx cfg
-          then Just RequestPayoutNonce {depositOutPoint = depositOutPoint, depositIdx = depositIdx}
+          then Just RequestPayoutNonce {depositIdx = depositIdx}
           else Nothing
   in  (newState, duty)
-processFulfillment _ _ _ _ = error "Invalid state transition"
+processPayoutDescriptor _ _ _ = error "Invalid state transition"
 
-processPayoutNonce deposit@Fulfilled {..} cfg nonce operatorIdx =
+processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx payoutNonces of
     Just _ ->
       error $ "Duplicate payout nonce received from operator: " ++ show operatorIdx
@@ -415,9 +441,7 @@ processPayoutNonce deposit@Fulfilled {..} cfg nonce operatorIdx =
                         { payoutNonces = newPayoutNonces
                         , payoutAggNonce = aggNonce
                         , payoutPartialSignatures = mempty
-                        , payoutOutputDesc = case operatorDesc of
-                            Just desc -> desc
-                            Nothing -> error "Operator descriptor must be set before collecting payout pubnonces"
+                        , payoutOutputDesc = operatorDesc
                         , ..
                         }
                     duty' = Just PublishPayoutPartial {depositOutPoint = depositOutPoint, depositIdx = depositIdx, aggNonce = aggNonce}
@@ -469,6 +493,11 @@ processPayoutPartial _ _ _ _ = error "Invalid state transition"
 
 -- Processes information about new blocks and applies any updates related to block height timeouts
 notifyNewBlock height Fulfilled {..}
+  | height > fulfillmentBlockHeight + cooperativePayoutWindow =
+      CooperativePathFailed {..}
+  | height <= blockHeight =
+      error "Rejecting already processed block"
+notifyNewBlock height PayoutDescriptorReceived {..}
   | height > fulfillmentBlockHeight + cooperativePayoutWindow =
       CooperativePathFailed {..}
   | height <= blockHeight =
