@@ -170,7 +170,7 @@ data DepositState
 -- Tasks that any operator (signer) has to perform for this deposit (from creation to spend)
 data DepositDuty
   = PublishDepositNonce -- publish this operator's nonce for spending the drt
-      { depositOutPoint :: OutPoint -- DRT outpoint to ID the signing session
+      { depositRequestOutPoint :: OutPoint -- DRT outpoint to ID the signing session
       }
   | PublishDepositPartial -- publish this operator's partial signature for spending the drt
       { depositOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
@@ -250,7 +250,7 @@ cooperativePayoutWindow = 2016 -- e.g., ~2 weeks assuming 10 min blocks
 
 -- STFs
 -- Definitions
-processGraphGenerated :: DepositState -> ExecConfig -> OperatorIdx -> (DepositState, Maybe DepositDuty)
+processGraphGenerated :: DepositState -> ExecConfig -> OperatorIdx -> (DepositState, DepositDuty)
 processNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processDepositConfirmation :: DepositState -> Transaction -> DepositState
@@ -277,8 +277,9 @@ processGraphGenerated deposit@Created {..} _cfg operatorIdx =
               }
           else
             deposit {linkedGraphs = linkedGraphs'}
-  in  (newState, Nothing)
-processGraphGenerated state _ _ = (state, Nothing) -- do nothing if the state has already progressed
+      duty = PublishDepositNonce {..}
+  in  (newState, duty)
+processGraphGenerated _ _ _ = error "Invalid state transition"
 
 processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx pubnonces of
