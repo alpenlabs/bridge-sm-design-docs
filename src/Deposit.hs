@@ -169,10 +169,10 @@ data DepositState
 -- Duties
 -- Tasks that any operator (signer) has to perform for this deposit (from creation to spend)
 data DepositDuty
-  = PublishDepositNonces -- publish this operator's nonce for spending the drt
+  = PublishDepositNonce -- publish this operator's nonce for spending the drt
       { depositOutPoint :: OutPoint -- DRT outpoint to ID the signing session
       }
-  | PublishDepositPartials -- publish this operator's partial signature for spending the drt
+  | PublishDepositPartial -- publish this operator's partial signature for spending the drt
       { depositOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
       , depositSighash :: Sighash -- sighash to be signed for the deposit transaction
       , depositAggNonce :: AggNonce
@@ -299,7 +299,7 @@ processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
                         }
                     duty' =
                       Just
-                        PublishDepositPartials
+                        PublishDepositPartial
                           { depositOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
                           , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
                           , depositAggNonce = aggNonce
