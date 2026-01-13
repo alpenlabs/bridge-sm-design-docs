@@ -186,13 +186,9 @@ data DepositDuty
       , deadline :: BitcoinBlockHeight
       , recipientDesc :: BtcDescriptor -- the user's descriptor where funds are to be sent by the operator
       }
-  | -- publish the operator's descriptor.
-    --  this duty execution will generate the operator's descriptor which will then be stored in state)
-    -- the assignee will also request *themselves* since getting a new descriptor from a wallet is a side-effect and has to be done inside a duty context
-    PublishPayoutDescriptor
-      { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
-      }
   | -- request pubnonces from *all* operators for cooperative payout
+    -- this duty execution will generate the operator's descriptor (which will then be stored in state)
+    -- the assignee will also request *themselves* since getting a new descriptor from a wallet is a side-effect and has to be done inside a duty context
     -- only the assignee creates this duty
     RequestPayoutNonce
       { depositIdx :: DepositIdx
@@ -201,14 +197,6 @@ data DepositDuty
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
       , operatorIdx :: OperatorIdx -- the index of the operator requesting cooperation for payout (could be the same as this operator)
       , operatorDesc :: BtcDescriptor -- descriptor of the operator to receive payout
-      }
-  | -- request partial signatures from *all* operators for cooperative payout
-    -- this technically does not require a request since the operators can just publish their partials when they aggregate pubnonces
-    -- however, it is cleaner to have the assignee drive all actions in the cooperative payout path
-    -- and have each operator respond via a dedicated 1:1 channel
-    RequestPayoutPartial
-      { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
-      , depositIdx :: DepositIdx
       }
   | PublishPayoutPartial -- publish the partial signature for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
@@ -270,7 +258,7 @@ processAssignment
   :: DepositState -> ExecConfig -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processFulfillment
   :: DepositState -> ExecConfig -> Transaction -> BitcoinBlockHeight -> (DepositState, Maybe DepositDuty)
-processPayoutDescriptor :: DepositState -> ExecConfig -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
+processPayoutDescriptor :: DepositState -> BtcDescriptor -> (DepositState, DepositDuty)
 processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial
   :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
@@ -407,24 +395,21 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
           }
       duty =
         if assignee == povIdx cfg
-          then Just PublishPayoutDescriptor {depositOutPoint = depositOutPoint}
+          then Just RequestPayoutNonce {..}
           else Nothing
   in  (newState, duty)
 processFulfillment _ _ _ _ = error "Invalid state transition"
 
-processPayoutDescriptor Fulfilled {..} cfg operatorDesc =
+processPayoutDescriptor Fulfilled {..} operatorDesc =
   let newState =
         PayoutDescriptorReceived
           { operatorDesc = operatorDesc
           , payoutNonces = mempty
           , ..
           }
-      duty =
-        if assignee == povIdx cfg
-          then Just RequestPayoutNonce {depositIdx = depositIdx}
-          else Nothing
+      duty = PublishPayoutNonce {operatorIdx = assignee, ..}
   in  (newState, duty)
-processPayoutDescriptor _ _ _ = error "Invalid state transition"
+processPayoutDescriptor _ _ = error "Invalid state transition"
 
 processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx payoutNonces of
@@ -444,7 +429,7 @@ processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
                         , payoutOutputDesc = operatorDesc
                         , ..
                         }
-                    duty' = Just RequestPayoutPartial {depositOutPoint = depositOutPoint, depositIdx = depositIdx}
+                    duty' = Just PublishPayoutPartial {..}
                 in  (newState', duty')
               else
                 (deposit {payoutNonces = newPayoutNonces}, Nothing)
