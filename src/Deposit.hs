@@ -444,7 +444,7 @@ processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
                         , payoutOutputDesc = operatorDesc
                         , ..
                         }
-                    duty' = Just PublishPayoutPartial {depositOutPoint = depositOutPoint, depositIdx = depositIdx, aggNonce = aggNonce}
+                    duty' = Just RequestPayoutPartial{depositOutPoint = depositOutPoint, depositIdx = depositIdx}
                 in  (newState', duty')
               else
                 (deposit {payoutNonces = newPayoutNonces}, Nothing)
