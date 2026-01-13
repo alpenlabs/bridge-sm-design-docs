@@ -125,7 +125,7 @@ data DepositState
       , fulfillmentTxid :: Txid -- txid of the fulfillment transaction (fronting the user)
       , fulfillmentBlockHeight :: BitcoinBlockHeight -- block height where the fulfillment transaction was confirmed
       , cooperativePayoutDeadline :: BitcoinBlockHeight
-      , operatorDesc :: BtcDescriptor -- the output descriptor of the operator for the cooperative payout (needs to be provided by the recipient)
+      , payoutOutputDesc :: BtcDescriptor -- the output descriptor of the operator for the cooperative payout (needs to be provided by the recipient)
       , payoutNonces :: Map.Map OperatorIdx PubNonce -- pubnonces required to sign the cooperative payout transaction (per operator)
       }
   | PayoutNoncesCollected -- All pubnonces have been collected for cooperative payout
@@ -173,7 +173,7 @@ data DepositDuty
       { depositRequestOutPoint :: OutPoint -- DRT outpoint to ID the signing session
       }
   | PublishDepositPartial -- publish this operator's partial signature for spending the drt
-      { depositOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
+      { depositRequestOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
       , depositSighash :: Sighash -- sighash to be signed for the deposit transaction
       , depositAggNonce :: AggNonce
       }
@@ -196,7 +196,7 @@ data DepositDuty
   | PublishPayoutNonces -- publish the nonce for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
       , operatorIdx :: OperatorIdx -- the index of the operator requesting cooperation for payout (could be the same as this operator)
-      , operatorDesc :: BtcDescriptor -- descriptor of the operator to receive payout
+      , payoutOutputDesc :: BtcDescriptor -- descriptor of the operator to receive payout
       }
   | PublishPayoutPartial -- publish the partial signature for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
@@ -301,7 +301,7 @@ processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
                     duty' =
                       Just
                         PublishDepositPartial
-                          { depositOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
+                          { depositRequestOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
                           , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
                           , depositAggNonce = aggNonce
                           }
@@ -401,14 +401,14 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
   in  (newState, duty)
 processFulfillment _ _ _ _ = error "Invalid state transition"
 
-processPayoutDescriptor Fulfilled {..} operatorDesc =
+processPayoutDescriptor Fulfilled {..} payoutOutputDesc =
   let newState =
         PayoutDescriptorReceived
-          { operatorDesc = operatorDesc
+          { payoutOutputDesc = payoutOutputDesc
           , payoutNonces = mempty
           , ..
           }
-      duty = PublishPayoutNonce {operatorIdx = assignee, ..}
+      duty = PublishPayoutNonces {operatorIdx = assignee, ..}
   in  (newState, duty)
 processPayoutDescriptor _ _ = error "Invalid state transition"
 
@@ -427,7 +427,6 @@ processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
                         { payoutNonces = newPayoutNonces
                         , payoutAggNonce = aggNonce
                         , payoutPartialSignatures = mempty
-                        , payoutOutputDesc = operatorDesc
                         , ..
                         }
                     duty' = Just PublishPayoutPartial {..}
