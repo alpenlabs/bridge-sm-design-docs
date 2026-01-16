@@ -266,26 +266,29 @@ notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
 processDepositSpend :: DepositState -> Transaction -> DepositState
 processDepositRequestSpend :: DepositState -> Transaction -> DepositState
 -- Implementations
-processGraphGenerated deposit@Created {..} _cfg operatorIdx =
-  let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
-      newState =
-        if Set.size linkedGraphs' == opCardinality _cfg
-          then
-            GraphGenerated
-              { pubnonces = mempty
-              , ..
-              }
-          else
-            deposit {linkedGraphs = linkedGraphs'}
-      duty = PublishDepositNonce {..}
-  in  (newState, duty)
+processGraphGenerated deposit@Created {..} cfg operatorIdx =
+  case Set.member operatorIdx linkedGraphs of
+    True ->
+      error $ "Duplicate graph generation received from operator: " ++ show operatorIdx
+    False ->
+      let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
+          newState =
+            if Set.size linkedGraphs' == opCardinality cfg
+              then
+                GraphGenerated
+                  { pubnonces = mempty
+                  , ..
+                  }
+              else
+                deposit {linkedGraphs = linkedGraphs'}
+          duty = PublishDepositNonce {..}
+      in  (newState, duty)
 processGraphGenerated _ _ _ = error "Invalid state transition"
 
 processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
-  case Map.lookup operatorIdx pubnonces of
-    Just _ ->
-      error $ "Duplicate nonce received from operator: " ++ show operatorIdx
-    Nothing ->
+  if Map.member operatorIdx pubnonces
+    then error $ "Duplicate nonce received from operator: " ++ show operatorIdx
+    else
       let newNonces = Map.insert operatorIdx nonce pubnonces
           (newState, duty) =
             if Map.size newNonces == opCardinality cfg
