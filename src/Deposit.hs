@@ -141,7 +141,8 @@ data DepositState
       , payoutAggNonce :: AggNonce -- aggregated nonce for signing the cooperative payout transaction
       , payoutPartialSignatures :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the cooperative payout transaction
       }
-  | PayoutPartialsCollected -- All partial signatures have been collected for cooperative payout
+  | --  (TODO: @mukeshdroid) - Remove the PayoutPartialsCollected to migitate payout tx hostage attack.
+    PayoutPartialsCollected -- All partial signatures have been collected for cooperative payout
       { depositIdx :: U32
       , blockHeight :: U32
       , depositOutPoint :: OutPoint
