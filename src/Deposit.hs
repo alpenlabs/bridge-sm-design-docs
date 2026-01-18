@@ -141,14 +141,6 @@ data DepositState
       , payoutAggNonce :: AggNonce -- aggregated nonce for signing the cooperative payout transaction
       , payoutPartialSignatures :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the cooperative payout transaction
       }
-  | --  (TODO: @mukeshdroid) - Remove the PayoutPartialsCollected to migitate payout tx hostage attack.
-    PayoutPartialsCollected -- All partial signatures have been collected for cooperative payout
-      { depositIdx :: U32
-      , blockHeight :: U32
-      , depositOutPoint :: OutPoint
-      , payoutTxid :: Txid
-      , payoutAggSignature :: Signature -- aggregated signature for the cooperative payout transaction
-      }
   | CooperativePathFailed -- Cooperative payout path could not succeed in time
       { depositIdx :: U32
       , blockHeight :: U32
@@ -450,17 +442,11 @@ processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorI
             then
               let newPartials = Map.insert operatorIdx partialSig payoutPartialSignatures
                   (newState, duty) =
-                    if Map.size newPartials == opCardinality cfg
+                    if (Map.size newPartials == opCardinality cfg - 1) && assignee == povIdx cfg
                       then
-                        let aggSignature = "payout_agg_signature_placeholder" -- Placeholder for actual aggregation logic;
-                        -- Placeholder for actual payout transaction id
-                        -- this is needed for book-keeping purposes so that any spend of the deposit
-                        -- can be associated with the expected payout in the cooperative path.
-                            payoutTxid = "payout_txid_placeholder"
-                            newState' =
-                              PayoutPartialsCollected
-                                { payoutAggSignature = aggSignature
-                                , payoutTxid = payoutTxid
+                        let newState' =
+                              PayoutNoncesCollected
+                                { payoutPartialSignatures = newPartials
                                 , ..
                                 }
                             duty' =
@@ -499,16 +485,13 @@ notifyNewBlock newHeight state = case lastProcessedBlock state of
   Just h | newHeight > h -> state {blockHeight = newHeight}
   _ -> error "Rejecting already processed block"
 
--- Handles both PayoutPartialsCollected and PayoutNoncesCollected states
--- It is technically possible to see a spend before all the payout partials have been collected
--- this can happen if the assignee withholds their partial signature
--- and just broadcasts the cooperative payout tx directly.
--- Similarly, it is also possible that a spend is seen after we progress to a `CooperativePathFailed` state
--- since each operator may observe the spend at different times and because the timeout for cooperative payout is different for different operators.
+-- The assignee never shares their partial signature to prevent payout tx hostage attacks.
+-- The assignee generates their partial only when broadcasting the cooperative payout.
+-- A spend can be seen while in PayoutNoncesCollected (after assignee broadcasts).
+-- It is also possible that a spend is seen after we progress to a `CooperativePathFailed` state
+-- since each operator may observe the spend at different times and because the timeout
+-- for cooperative payout is different for different operators.
 processDepositSpend state confirmedTx = case state of
-  PayoutPartialsCollected {..}
-    | depositOutPoint `elem` inpoints confirmedTx ->
-        Spent {payoutTxid = txid confirmedTx, ..}
   PayoutNoncesCollected {..}
     | depositOutPoint `elem` inpoints confirmedTx ->
         Spent {payoutTxid = txid confirmedTx, ..}
