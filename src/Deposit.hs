@@ -197,7 +197,11 @@ data DepositDuty
       , aggNonce :: AggNonce
       }
   | PublishPayout -- publish the cooperative payout transaction to the Bitcoin network
-      { payoutTx :: Transaction
+      { depositOutPoint :: OutPoint
+      , depositIdx :: DepositIdx
+      , aggNonce :: AggNonce
+      , payoutTx :: Transaction
+      , collectedPartials :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the cooperative payout transaction
       }
   deriving (Show, Eq)
 
@@ -450,7 +454,14 @@ processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorI
                         let newState' = deposit {payoutPartialSignatures = newPartials}
                             duty' =
                               if assignee == povIdx cfg
-                                then Just PublishPayout {payoutTx = "payout_transaction_placeholder", ..}
+                                then
+                                  Just
+                                    PublishPayout
+                                      { payoutTx = "payout_transaction_placeholder"
+                                      , collectedPartials = newPartials
+                                      , aggNonce = payoutAggNonce
+                                      , ..
+                                      }
                                 else Nothing
                         in  (newState', duty')
                       else
