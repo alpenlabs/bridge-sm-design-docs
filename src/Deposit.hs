@@ -447,14 +447,10 @@ processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorI
                   (newState, duty) =
                     if Map.size newPartials == opCardinality cfg - 1
                       then
-                        let newState' =
-                              PayoutNoncesCollected
-                                { payoutPartialSignatures = newPartials
-                                , ..
-                                }
+                        let newState' = deposit {payoutPartialSignatures = newPartials}
                             duty' =
                               if assignee == povIdx cfg
-                                then Just PublishPayout { payoutTx = "payout_transaction_placeholder", .. }
+                                then Just PublishPayout {payoutTx = "payout_transaction_placeholder", ..}
                                 else Nothing
                         in  (newState', duty')
                       else
