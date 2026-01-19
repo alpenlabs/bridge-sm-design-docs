@@ -445,7 +445,7 @@ processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorI
             then
               let newPartials = Map.insert operatorIdx partialSig payoutPartialSignatures
                   (newState, duty) =
-                    if (Map.size newPartials == opCardinality cfg - 1) && assignee == povIdx cfg
+                    if Map.size newPartials == opCardinality cfg - 1
                       then
                         let newState' =
                               PayoutNoncesCollected
@@ -453,11 +453,9 @@ processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorI
                                 , ..
                                 }
                             duty' =
-                              Just
-                                PublishPayout
-                                  { payoutTx = "payout_transaction_placeholder" -- Placeholder for actual payout transaction
-                                  , ..
-                                  }
+                              if assignee == povIdx cfg
+                                then Just PublishPayout { payoutTx = "payout_transaction_placeholder", .. }
+                                else Nothing
                         in  (newState', duty')
                       else
                         (deposit {payoutPartialSignatures = newPartials}, Nothing)
