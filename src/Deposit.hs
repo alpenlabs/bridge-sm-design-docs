@@ -422,7 +422,10 @@ processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
                         , payoutPartialSignatures = mempty
                         , ..
                         }
-                    duty' = Just PublishPayoutPartial {..}
+                    duty' =
+                      if assignee /= povIdx cfg
+                        then Just PublishPayoutPartial {..}
+                        else Nothing
                 in  (newState', duty')
               else
                 (deposit {payoutNonces = newPayoutNonces}, Nothing)
