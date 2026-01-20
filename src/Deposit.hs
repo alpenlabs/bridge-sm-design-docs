@@ -196,7 +196,9 @@ data DepositDuty
       , depositIdx :: DepositIdx
       , aggNonce :: AggNonce
       }
-  | PublishPayout -- publish the cooperative payout transaction to the Bitcoin network
+  | -- The assignee generates their own partial signature as well as signing and broadcasting the payout tx.
+    -- The extra fields (aggNonce, collectedPartials) are needed for generating the assignee's partial.
+    PublishPayout
       { depositOutPoint :: OutPoint
       , depositIdx :: DepositIdx
       , aggNonce :: AggNonce
@@ -427,6 +429,14 @@ processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
                         , ..
                         }
                     duty' =
+                      -- Everyone except the assignee publishes their cooperative-payout partial signature.
+                      -- Rationale: prevent payout-tx hostage attacks.
+                      -- If the assignee also published their partial, a malicious coordinator/operator could
+                      -- withhold their own partial and force the assignee to fall back to posting a claim.
+                      -- If a cooperative payout is later broadcast, the assignee is unable to spend the
+                      -- contested or uncontested path, and can be slashed after the timelock expires.
+                      -- By withholding the assignee's partial, only the assignee can finalize and broadcast
+                      -- the cooperative payout transaction.
                       if assignee /= povIdx cfg
                         then Just PublishPayoutPartial {..}
                         else Nothing
