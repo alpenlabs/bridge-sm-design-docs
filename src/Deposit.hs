@@ -14,12 +14,14 @@ module Deposit
   , notifyNewBlock
   , processDepositSpend
   , hasCooperativePayoutFailed
+  , processNagTick
   ) where
 
 -- Prelude
 
 import Data.List.NonEmpty (NonEmpty ((:|)), head)
 import Data.Map qualified as Map
+import Data.Maybe (mapMaybe)
 import Data.Set qualified as Set
 import Data.Word (Word32)
 
@@ -44,7 +46,7 @@ type AdaptorKey = String -- placeholder
 newtype DepositTx = DepositTx
   { tx :: Transaction -- this is derived from a DRT
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 txid :: Transaction -> Txid
 txid _ = "txid_placeholder" -- Placeholder implementation
@@ -203,7 +205,35 @@ data DepositDuty
       , payoutTx :: Transaction
       , collectedPartials :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the cooperative payout transaction
       }
-  deriving (Show, Eq)
+  | -- nag other operators for missing information
+    Nag
+      { duty :: NagDuty
+      }
+  deriving (Show, Eq, Ord)
+
+-- Duties to nag for missing information from other operators
+data NagDuty
+  = -- Nag other operators to broadcast their nonce for a deposit
+    NagDepositNonce
+      { depositIdx :: DepositIdx -- the index of the deposit for which the nonce is required
+      , operatorIdx :: OperatorIdx -- the index of the operator to nag
+      }
+  | -- Nag other operators to broadcast their partial signature for a deposit
+    NagDepositPartial
+      { depositIdx :: DepositIdx -- the index of the deposit for which the partial signature is required
+      , operatorIdx :: OperatorIdx -- the index of the operator to nag
+      }
+  | -- Nag other operators to broadcast their nonce for a payout
+    NagPayoutNonce
+      { depositIdx :: DepositIdx -- the index of the deposit for which the payout nonce is required
+      , operatorIdx :: OperatorIdx -- the index of the operator to nag
+      }
+  | -- Nag other operators to broadcast their partial signature for a payout
+    NagPayoutPartial
+      { depositIdx :: DepositIdx -- the index of the deposit for which the payout partial signature
+      , operatorIdx :: OperatorIdx -- the index of the operator to nag
+      }
+  deriving (Show, Eq, Ord)
 
 -- Additional Types
 newtype ExecConfig = ExecConfig
@@ -554,3 +584,53 @@ lastProcessedBlock state = case state of
   Aborted {} -> Nothing
   Spent {} -> Nothing
   otherState -> Just (blockHeight otherState)
+
+-- Retry Handlers
+-- Declarations
+processNagTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
+-- Definitions
+processNagTick state cfg =
+  let expectedIds = Set.map (\(idx, _, _, _) -> idx) $ operators cfg
+      presentIds = Map.keysSet $ case state of
+        GraphGenerated {pubnonces} -> pubnonces
+        DepositNoncesCollected {partialSignatures} -> partialSignatures
+        PayoutDescriptorReceived {payoutNonces} -> payoutNonces
+        PayoutNoncesCollected {payoutPartialSignatures} -> payoutPartialSignatures
+        _ -> Map.empty
+
+      missingIds = Set.difference expectedIds presentIds
+  in  Set.fromList
+        $ mapMaybe
+          ( \opIdx -> case state of
+              GraphGenerated {..} ->
+                Just Nag {duty = NagDepositNonce {depositIdx = depositIdx, operatorIdx = opIdx}}
+              DepositNoncesCollected {..} ->
+                Just Nag {duty = NagDepositPartial {depositIdx = depositIdx, operatorIdx = opIdx}}
+              PayoutDescriptorReceived {..} ->
+                Just Nag {duty = NagPayoutNonce {depositIdx = depositIdx, operatorIdx = opIdx}}
+              PayoutNoncesCollected {..} ->
+                Just Nag {duty = NagPayoutPartial {depositIdx = depositIdx, operatorIdx = opIdx}}
+              _ -> Nothing
+          )
+        $ Set.toList missingIds
+
+processRetryTick state = case state of
+  DepositPartialsCollected {..} ->
+    Set.singleton PublishDeposit {signedDepositTx = signedDepositTx}
+  Assigned {..} ->
+    Set.singleton
+      FulfillWithdrawal
+        { depositIdx = depositIdx
+        , deadline = deadline
+        , recipientDesc = recipientDesc
+        }
+  Fulfilled {..} ->
+    Set.singleton RequestPayoutNonce {depositIdx = depositIdx}
+  PayoutNoncesCollected {..} ->
+    Set.singleton
+      PublishPayoutPartial
+        { depositOutPoint = depositOutPoint
+        , depositIdx = depositIdx
+        , aggNonce = payoutAggNonce
+        }
+  _ -> Set.empty
