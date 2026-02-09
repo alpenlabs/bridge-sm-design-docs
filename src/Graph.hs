@@ -29,6 +29,7 @@ module Graph
   , processPayoutConnectorSpent
   , notifyNewBlock
   , lastProcessedBlock
+  , processNagTick
   ) where
 
 -- Prelude
@@ -38,7 +39,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.Maybe (fromJust, isJust, isNothing)
+import Data.Maybe (fromJust, isJust, isNothing, mapMaybe)
 import Data.Set qualified as Set
 import Data.Word (Word32)
 
@@ -385,6 +386,21 @@ data GraphDuty -- Tasks to be completed post state transition
       }
   | PublishContestedPayout
       { contestedPayoutTx :: Transaction -- the contested payout transaction to be published
+      }
+  | Nag {duty :: NagDuty}
+  deriving (Show, Eq, Ord)
+
+-- Duty to nag other operators for required information
+data NagDuty
+  = -- Nag for nonces required for graph signing
+    NagGraphNonces
+      { depositIdx :: DepositIdx -- the index of the deposit associated with this graph
+      , operatorIdx :: OperatorIdx -- the index of the operator associated with this graph
+      }
+  | -- Nag for partial signatures required for graph signing
+    NagGraphPartials
+      { depositIdx :: DepositIdx -- the index of the deposit associated with this graph
+      , operatorIdx :: OperatorIdx -- the index of the operator associated with this graph
       }
   deriving (Show, Eq, Ord)
 
@@ -981,3 +997,26 @@ lastProcessedBlock state = case state of
   Slashed {} -> Nothing
   Aborted {} -> Nothing
   otherState -> Just otherState.blockHeight
+
+-- Retry handlers
+-- Declarations
+processNagTick :: GraphState -> OperatorTable -> Set.Set GraphDuty
+-- Definitions
+processNagTick state opTable =
+  let expectedIds = Set.map (\(idx, _, _) -> idx) opTable.operators
+      presentIds = Map.keysSet $ case state of
+        AdaptorsVerified {..} -> nonces
+        NoncesCollected {..} -> partials
+        _ -> Map.empty
+      missingIds = Set.difference expectedIds presentIds
+  in  Set.fromList
+        $ mapMaybe
+          ( \opIdx ->
+              case state of
+                AdaptorsVerified {..} ->
+                  Just Nag {duty = NagGraphNonces {depositIdx = depositIdx, operatorIdx = opIdx}}
+                NoncesCollected {..} ->
+                  Just Nag {duty = NagGraphPartials {depositIdx = depositIdx, operatorIdx = opIdx}}
+                _ -> Nothing
+          )
+        $ Set.toList missingIds
