@@ -291,6 +291,7 @@ data GraphState
       , contestBlockHeight :: BitcoinBlockHeight
       , counterProofsAndConfs :: Map.Map OperatorIdx (Txid, BitcoinBlockHeight) -- the txids of the counterproof transactions submitted on chain along with their confirmation heights
       , counterProofNacks :: Map.Map OperatorIdx Txid -- the txids of the counterproof NACK transactions submitted on chain
+      , counterProofLabels :: Map.Map OperatorIdx (NonEmpty Labels) -- the labels (GC labels) committed in the counterproofs
       }
   | AllNackd
       { -- Represents a state where all possible counterproof transactions have been NACK'd on chain
@@ -729,9 +730,12 @@ processCounterProof BridgeProofPosted {..} tx counterproofBlockHeight =
                 }
           newCounterProofs =
             Map.singleton counterProverIdx (txid tx, counterproofBlockHeight)
+          newCounterProofLabels =
+            Map.singleton counterProverIdx labels
       in  ( CounterProofPosted
               { counterProofsAndConfs = newCounterProofs
               , counterProofNacks = mempty
+              , counterProofLabels = newCounterProofLabels
               , ..
               }
           , GraphTransitionOutput
