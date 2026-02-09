@@ -92,8 +92,7 @@ data DepositState
       , outputIndex :: U32
       , blockHeight :: U32
       , depositRequestOutPoint :: OutPoint
-      , depositTransaction :: DepositTx
-      , aggSignature :: Signature -- aggregated signature for the deposit transaction
+      , signedDepositTx :: Transaction -- the fully signed deposit transaction ready to be broadcast
       }
   | Deposited -- Deposit transaction confirmed on-chain
       { depositIdx :: U32
@@ -171,8 +170,7 @@ data DepositDuty
       , depositAggNonce :: AggNonce
       }
   | PublishDeposit -- publish the deposit transaction to the Bitcoin network
-      { depositTx :: DepositTx
-      , aggSignature :: Signature
+      { signedDepositTx :: Transaction -- the fully signed deposit transaction ready to be broadcast
       }
   | FulfillWithdrawal -- front the user by sending funds to the provided descriptor within the given deadline
       { depositIdx :: DepositIdx
@@ -325,13 +323,13 @@ processPartial deposit@DepositNoncesCollected {..} cfg partialSig operatorIdx =
                   (newState, duty) =
                     if Map.size newPartials == opCardinality cfg
                       then
-                        let aggSignature = "agg_signature_placeholder" -- Placeholder for actual aggregation logic
+                        let signedDepositTx = "signed_deposit_tx_placeholder" -- Placeholder for actual aggregation and tx finalization logic
                             newState' =
                               DepositPartialsCollected
-                                { aggSignature = aggSignature
+                                { signedDepositTx = signedDepositTx
                                 , ..
                                 }
-                            duty' = Just PublishDeposit {depositTx = depositTransaction, aggSignature = aggSignature}
+                            duty' = Just PublishDeposit {signedDepositTx = signedDepositTx}
                         in  (newState', duty')
                       else
                         (deposit {partialSignatures = newPartials}, Nothing)
@@ -342,7 +340,7 @@ processPartial _ _ _ _ = error "Invalid state transition"
 
 processDepositConfirmation DepositPartialsCollected {..} confirmedTx =
   let newState =
-        if txid confirmedTx == txid (tx depositTransaction)
+        if txid confirmedTx == txid signedDepositTx
           then
             Deposited
               { depositOutPoint = (txid confirmedTx, outputIndex)
