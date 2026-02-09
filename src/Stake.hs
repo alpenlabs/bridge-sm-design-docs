@@ -16,12 +16,13 @@ module Stake
   , isUnstaked
   , getPreimage
   , lastProcessedBlock
+  , processNagTick
   ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map qualified as Map
-import Data.Maybe (fromJust, isJust, isNothing)
+import Data.Maybe (fromJust, isJust, isNothing, mapMaybe)
 import Data.Set qualified as Set
 import Data.Word (Word32)
 
@@ -120,6 +121,21 @@ data StakeDuty
       }
   | PublishUnstakingTx
       { stakeData :: StakeData -- data required to construct the unstaking graph
+      }
+  | Nag
+      { duty :: NagDuty -- specific nag duty
+      }
+  deriving (Show, Eq, Ord)
+
+data NagDuty
+  = NagStakeData
+      { operatorIdx :: OperatorIdx -- index of the operator who owns the stake
+      }
+  | NagUnstakingNonces
+      { operatorIdx :: OperatorIdx -- index of the operator who owns the stake
+      }
+  | NagUnstakingPartials
+      { operatorIdx :: OperatorIdx -- index of the operator who owns the stake
       }
   deriving (Show, Eq, Ord)
 
@@ -289,3 +305,25 @@ lastProcessedBlock :: StakeState -> Maybe BitcoinBlockHeight
 lastProcessedBlock state = case state of
   Unstaked {} -> Nothing
   _ -> Just (blockHeight state)
+
+-- Retry Handlers
+-- Declarations
+processNagTick :: StakeState -> OperatorTable -> Set.Set StakeDuty
+-- Definitions
+processNagTick state opTable =
+  let expectedIds = Set.map (\(idx, _, _) -> idx) $ operators opTable
+      presentIds = case state of
+        Created {..} -> Set.singleton operatorIdx
+        StakeGraphGenerated {..} -> Map.keysSet nonces
+        UnstakingNoncesCollected {..} -> Map.keysSet partials
+        _ -> Set.empty
+      missingIds = Set.difference expectedIds presentIds
+  in  Set.fromList
+        $ mapMaybe
+          ( \opIdx -> case state of
+              Created {} -> Just Nag {duty = NagStakeData {operatorIdx = opIdx}}
+              StakeGraphGenerated {} -> Just Nag {duty = NagUnstakingNonces {operatorIdx = opIdx}}
+              UnstakingNoncesCollected {} -> Just Nag {duty = NagUnstakingPartials {operatorIdx = opIdx}}
+              _ -> Nothing
+          )
+        $ Set.toList missingIds
