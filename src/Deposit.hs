@@ -15,6 +15,7 @@ module Deposit
   , processDepositSpend
   , hasCooperativePayoutFailed
   , processNagTick
+  , processRetryTick
   ) where
 
 -- Prelude
@@ -588,6 +589,7 @@ lastProcessedBlock state = case state of
 -- Retry Handlers
 -- Declarations
 processNagTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
+processRetryTick :: DepositState -> Set.Set DepositDuty
 -- Definitions
 processNagTick state cfg =
   let expectedIds = Set.map (\(idx, _, _, _) -> idx) $ operators cfg
@@ -633,4 +635,5 @@ processRetryTick state = case state of
         , depositIdx = depositIdx
         , aggNonce = payoutAggNonce
         }
+  -- the rest of the duties need not be retried
   _ -> Set.empty
