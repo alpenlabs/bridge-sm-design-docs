@@ -30,6 +30,7 @@ module Graph
   , notifyNewBlock
   , lastProcessedBlock
   , processNagTick
+  , processRetryTick
   ) where
 
 -- Prelude
@@ -1005,6 +1006,7 @@ lastProcessedBlock state = case state of
 -- Retry handlers
 -- Declarations
 processNagTick :: GraphState -> OperatorTable -> Set.Set GraphDuty
+processRetryTick :: GraphState -> OperatorTable -> Set.Set GraphDuty
 -- Definitions
 processNagTick state opTable =
   let expectedIds = Set.map (\(idx, _, _) -> idx) opTable.operators
@@ -1024,3 +1026,38 @@ processNagTick state opTable =
                 _ -> Nothing
           )
         $ Set.toList missingIds
+
+processRetryTick state _opTable = case state of
+  Created {} ->
+    Set.singleton GenerateGraphData
+  GraphGenerated {} ->
+    Set.singleton VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighash generation from graph data
+  Fulfilled {} ->
+    Set.singleton PublishClaim {claimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction generation and finalization
+  Claimed {} ->
+    Set.singleton PublishContest {contestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction generation and finalization
+  Contested {..} ->
+    Set.singleton PublishBridgeProof {depositIdx, operatorIdx}
+  BridgeProofPosted {..} ->
+    Set.singleton
+      PublishCounterProof
+        { depositIdx
+        , operatorIdx
+        , contestOutPoint = (contest graphSummary, 3 + povIdx _opTable)
+        , proof = proof
+        }
+  CounterProofPosted {..} ->
+    let postedCounterProofNacks = Map.keysSet counterProofNacks
+        expectedCounterProofNacks = Map.keysSet $ counterproofs graphSummary
+        missingNacks = Set.difference expectedCounterProofNacks postedCounterProofNacks
+    in  Set.map
+          ( \counterProverIdx ->
+              PublishCounterProofNack
+                { depositIdx
+                , counterProverIdx
+                , labels = counterProofLabels Map.! counterProverIdx
+                }
+          )
+          missingNacks
+  -- the rest of the duties need not be retried
+  _ -> Set.empty
