@@ -97,7 +97,7 @@ data GraphSummary = GraphSummary
   , counterproofNacks :: Map OperatorIdx Txid
   , slash :: Txid
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 summarize :: GraphData -> GraphSummary
 summarize _ =
@@ -119,12 +119,12 @@ data AbortReason
       { spendingTxid :: Txid -- the txid of the transaction that spent the payout connector
       }
   | DepositSpent
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 newtype OperatorTable = OperatorTable
   { operators :: Set.Set (OperatorIdx, P2pKey, SchnorrKey)
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 opCardinality :: OperatorTable -> Int
 opCardinality cfg = Set.size (operators cfg)
@@ -331,7 +331,7 @@ data GraphState
       , operatorIdx :: OperatorIdx
       , reason :: AbortReason -- reason for aborting the graph
       }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- Duties
 data GraphDuty -- Tasks to be completed post state transition
@@ -386,26 +386,26 @@ data GraphDuty -- Tasks to be completed post state transition
   | PublishContestedPayout
       { contestedPayoutTx :: Transaction -- the contested payout transaction to be published
       }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- Signals
 -- The messages that need to be propagated across state machines
 data GraphSignal
   = GraphAvailable OperatorIdx -- signifies that the graph is fully signed and available for use for unilateral reimbursement
   | OperatorSlashed OperatorIdx -- signifies that the operator has been slashed
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 {-# HLINT ignore "Use newtype instead of data" #-}
 data DepositSignal
   = CooperativePathFailed DepositIdx -- signifies that the cooperative path for this deposit has failed and unilateral reimbursement must be initiated (triggers the `processActivation` STF)
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- Output from each state transition
 data GraphTransitionOutput = GraphTransitionOutput
   { signal :: Maybe GraphSignal
   , duty :: Maybe GraphDuty
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 emptyOutput :: GraphTransitionOutput
 emptyOutput =
