@@ -100,7 +100,7 @@ data StakeState
       , preimage :: Preimage
       , unstakingTxid :: Txid -- the txid of the unstaking transaction
       }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- Duties
 -- Tasks that need to be executed on every state transition
@@ -121,14 +121,14 @@ data StakeDuty
   | PublishUnstakingTx
       { stakeData :: StakeData -- data required to construct the unstaking graph
       }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- Output
 -- Represents the output of the state machine after processing an event
 data StakeTransitionOutput = StakeTransitionOutput
   { duty :: Maybe StakeDuty
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 emptyOutput :: StakeTransitionOutput
 emptyOutput = StakeTransitionOutput {duty = Nothing}
@@ -144,7 +144,7 @@ data OperatorTable where
                 )
        }
     -> OperatorTable
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 opCardinality :: OperatorTable -> Int
 opCardinality OperatorTable {..} = Set.size operators
