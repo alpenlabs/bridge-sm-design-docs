@@ -970,8 +970,6 @@ notifyNewBlock curState _opTable newBlockHeight = case curState of
             , duty = Just PublishContestedPayout {signedContestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
             }
         )
-    | newBlockHeight > contestBlockHeight + payoutTimeout ->
-        (curState {blockHeight = newBlockHeight}, mkSlashOutput curState)
   -- The next three states should not need any further updates
   Slashed {} -> error "No more updates required"
   Withdrawn {} -> error "No more updates required"
