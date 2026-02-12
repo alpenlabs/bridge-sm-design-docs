@@ -665,20 +665,6 @@ processClaim GraphSigned {..} tx claimBlockHeight
           }
       )
   | otherwise = error "Invalid claim transaction"
--- a malicious operator can withhold their partial signature and then issue a claim
-processClaim NoncesCollected {..} tx claimBlockHeight
-  | txid tx == claim graphSummary =
-      ( Claimed
-          { fulfillmentTxid' = Nothing
-          , fulfillmentBlockHeight' = Nothing
-          , ..
-          }
-      , GraphTransitionOutput
-          { signal = Nothing
-          , duty = Just PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
-          }
-      )
-  | otherwise = error "Invalid claim transaction"
 -- Invalid cases
 processClaim state _ _ = error $ "Invalid state for claim: " ++ show state
 
