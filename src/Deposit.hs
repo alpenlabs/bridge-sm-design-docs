@@ -78,7 +78,7 @@ data DepositState
       , depositRequestOutPoint :: OutPoint
       , outputIndex :: U32
       , blockHeight :: U32
-      , claimTxid :: Txid -- the txid of the claim transaction (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
+      , claimTxids :: Map.Map OperatorIdx Txid -- the txid of the claim transactions per operator (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
       , pubnonces :: Map.Map OperatorIdx PubNonce -- pubnonces required to sign the deposit transaction (per operator)
       }
   | DepositNoncesCollected -- All deposit pubnonces have been collected
@@ -87,6 +87,7 @@ data DepositState
       , depositRequestOutPoint :: OutPoint
       , outputIndex :: U32
       , blockHeight :: U32
+      , claimTxids :: Map.Map OperatorIdx Txid
       , pubnonces :: Map.Map OperatorIdx PubNonce
       , aggNonce :: AggNonce -- aggregated nonce for signing the deposit transaction
       , partialSignatures :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the deposit transaction
@@ -167,11 +168,13 @@ data DepositState
 data DepositDuty
   = PublishDepositNonce -- publish this operator's nonce for spending the drt
       { depositRequestOutPoint :: OutPoint -- DRT outpoint to ID the signing session
+      , claimTxids :: Map.Map OperatorIdx Txid -- the txid of the claim transaction per operator (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
       }
   | PublishDepositPartial -- publish this operator's partial signature for spending the drt
       { depositRequestOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
       , depositSighash :: Sighash -- sighash to be signed for the deposit transaction
-      , depositAggNonce :: AggNonce
+      , claimTxids :: Map.Map OperatorIdx Txid -- the txid of the claim transaction per operator (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
+      , depositAggNonce :: AggNonce -- the aggregate nonce for signing the deposit transaction (used to generate the partial signature)
       }
   | PublishDeposit -- publish the deposit transaction to the Bitcoin network
       { signedDepositTx :: Transaction -- the fully signed deposit transaction ready to be broadcast
@@ -297,12 +300,13 @@ processDepositRequestSpend :: DepositState -> Transaction -> DepositState
 -- Implementations
 processGraphGenerated deposit@Created {..} _cfg claimTxid operatorIdx =
   let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
+      claimTxids = Map.insert operatorIdx claimTxid claimTxids -- since this comes from an internal signal, no need to error on duplicates
       newState =
         if Set.size linkedGraphs' == opCardinality _cfg
           then
             GraphGenerated
               { pubnonces = mempty
-              , claimTxid = claimTxid
+              , claimTxids = claimTxids
               , ..
               }
           else
@@ -334,6 +338,7 @@ processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
                           { depositRequestOutPoint = Data.List.NonEmpty.head $ inpoints $ tx depositTransaction
                           , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
                           , depositAggNonce = aggNonce
+                          , ..
                           }
                 in  (newState', duty')
               else
