@@ -62,6 +62,8 @@ type Proof = String -- bytestring
 type Labels = String -- placeholder for (GC) labels committed in the counterproof
 type P2pKey = String -- placeholder for P2P public key
 type SchnorrKey = String -- placeholder for Schnorr public key
+type TapNodeHash = String -- placeholder for taproot node hash
+type Tweak = Maybe (Maybe TapNodeHash) -- placeholder for taproot tweak (could be either a tap node hash or no tweak)
 
 txid :: Transaction -> Txid
 txid _ = "txid_placeholder" -- Placeholder implementation
@@ -343,51 +345,57 @@ data GraphDuty -- Tasks to be completed post state transition
       { sighashes :: NonEmpty Sighash -- placeholder for sighashes to verify adaptors against
       }
   | PublishGraphNonces
-      { depositIdx :: DepositIdx -- the index of the deposit this graph is associated with (used to seed nonce generation via s2)
-      , operatorIdx :: OperatorIdx -- the index of the operator this graph belongs to (used to seed nonce generation via s2)
+      { depositIdx :: DepositIdx -- the index of the deposit this graph is associated with (used for logging)
+      , operatorIdx :: OperatorIdx -- the index of the operator this graph belongs to (used for logging)
+      , graphInpoints :: NonEmpty OutPoint -- the inpoints of the graph (used to establish s2 musig2 session per input being signed)
+      , graphTweaks :: NonEmpty Tweak -- the tweak required for taproot spend per input being signed
       }
   | PublishGraphPartials
       { depositIdx :: DepositIdx -- the index of the deposit this graph is associated with (used to retrieve musig2 session via s2)
       , operatorIdx :: OperatorIdx -- the index of the operator this graph belongs to (used to retrieve musig2 session via s2)
       , aggNonces :: NonEmpty AggNonce -- aggregated nonces to be used for partial signature generation
       , sighashes :: NonEmpty Sighash -- sighashes to sign
+      , graphInpoints :: NonEmpty OutPoint -- the inpoints of the graph (used to retrieve s2 musig2 session per input being signed)
+      , graphTweaks :: NonEmpty Tweak -- the tweak required for taproot spend per input being signed
       , claimTxid :: Txid -- the txid of the claim transaction (since the claim transaction is under complete control of an operator, make sure this transaction does not exist on chain before signing off)
       }
   | PublishClaim
-      { claimTx :: Transaction -- the claim transaction to be published
+      { signedClaimTx :: Transaction -- the claim transaction to be published
       }
   | PublishUncontestedPayout
-      { uncontestedPayoutTx :: Transaction -- the uncontested payout transaction to be published
+      { signedUncontestedPayoutTx :: Transaction -- the uncontested payout transaction to be published
       }
   | PublishContest
-      { contestTx :: Transaction -- the contest transaction to be published
+      { signedContestTx :: Transaction -- the contest transaction to be published
       }
   | PublishBridgeProof
       { depositIdx :: DepositIdx -- the index of the deposit being claimed
       , operatorIdx :: OperatorIdx -- the index of the operator making the claim
+      , bridgeProofTx :: Transaction -- the bridge proof transaction to be published (unsigned)
       }
   | PublishBridgeProofTimeout
-      { timeoutTx :: Transaction -- the bridge proof timeout transaction to be published
+      { signedTimeoutTx :: Transaction -- the bridge proof timeout transaction to be published
       }
   | PublishCounterProof
       { depositIdx :: DepositIdx -- the index of the deposit being claimed
       , operatorIdx :: OperatorIdx -- the index of the operator making the claim
-      , contestOutPoint :: OutPoint -- the outpoint of the contest transaction being spent
+      , counterProofTx :: Transaction -- the counterproof transaction to be published (unsigned; signed via adaptors)
       , proof :: Proof -- the proof (data) being refuted
       }
   | PublishCounterProofAck
-      { counterProofAckTx :: Transaction -- the counterproof ACK transaction to be published
+      { signedCounterProofAckTx :: Transaction -- the counterproof ACK transaction to be published
       }
   | PublishCounterProofNack
       { depositIdx :: DepositIdx -- the index of the deposit being claimed
       , counterProverIdx :: OperatorIdx -- the index of the operator making the claim
+      , counterProofNackTx :: Transaction -- the counterproof NACK transaction to be published (unsigned; signed by mosaic after GC evaluation)
       , labels :: NonEmpty Labels -- the labels (GC labels) committed in the counterproof
       }
   | PublishSlash
-      { slashTx :: Transaction -- the slash transaction to be published
+      { signedSlashTx :: Transaction -- the slash transaction to be published
       }
   | PublishContestedPayout
-      { contestedPayoutTx :: Transaction -- the contested payout transaction to be published
+      { signedContestedPayoutTx :: Transaction -- the contested payout transaction to be published
       }
   | Nag {duty :: NagDuty}
   deriving (Show, Eq, Ord)
@@ -446,7 +454,7 @@ processActivation :: GraphState -> (GraphState, GraphTransitionOutput) -- Fulfil
 processClaim :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Fulfilled/Assigned/GraphSigned/NoncesCollected -> Claimed
 processContest :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Claimed -> Contested
 processBridgeProof
-  :: GraphState -> OperatorTable -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Contested -> BridgeProofPosted
+  :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Contested -> BridgeProofPosted
 processBridgeProofTimeout :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- Contested -> BridgeProofTimedout
 processCounterProof :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- BridgeProofPosted/CounterProofPosted -> CounterProofPosted
 processCounterProofAckd :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- CounterProofPosted -> Acked
@@ -477,7 +485,14 @@ processAdaptorsVerification GraphGenerated {..} =
       }
   , GraphTransitionOutput
       { signal = Nothing
-      , duty = Just PublishGraphNonces {depositIdx, operatorIdx}
+      , duty =
+          Just
+            PublishGraphNonces
+              { depositIdx
+              , operatorIdx
+              , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)] -- Placeholder for graph inpoints (needs to be extracted from graph)
+              , graphTweaks = NonEmpty.fromList [Nothing] -- Placeholder for tweaks (needs to be extracted from graph)
+              }
       }
   )
 processAdaptorsVerification AdaptorsVerified {} = error "Adaptors already verified"
@@ -506,6 +521,8 @@ processNonces AdaptorsVerified {..} execConfig (opIdx, receivedNonces) =
                       , operatorIdx
                       , aggNonces = NonEmpty.fromList ["agg_nonce_placeholder"] -- Placeholder for agg nonces
                       , sighashes = NonEmpty.fromList ["sighash_placeholder"] -- Placeholder for sighashes
+                      , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)] -- Placeholder for graph inpoints (needs to be extracted from graph)
+                      , graphTweaks = NonEmpty.fromList [Nothing] -- Placeholder for graph tweaks (needs to be extracted from graph)
                       , claimTxid = claim graphSummary
                       }
               }
@@ -591,7 +608,7 @@ processFulfillment Assigned {..} fulfillmentTxid fulfillmentBlockHeight =
       }
   , GraphTransitionOutput
       { signal = Nothing
-      , duty = Just PublishClaim {claimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction
+      , duty = Just PublishClaim {signedClaimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction
       }
   )
 processFulfillment Fulfilled {} _ _ = error "Graph already activated"
@@ -604,7 +621,7 @@ processActivation Fulfilled {..} =
   , GraphTransitionOutput
       { signal = Nothing
       , -- Publishing of claim is idempotent so it is fine to create duties multiple times in this state (if neede)
-        duty = Just PublishClaim {claimTx = "placeholder_claim_tx"} -- Placeholder for claim transaction
+        duty = Just PublishClaim {signedClaimTx = "placeholder_claim_tx"} -- Placeholder for claim transaction
       }
   )
 processActivation state = error $ "Invalid state for activation" ++ show state
@@ -630,7 +647,7 @@ processClaim Assigned {..} tx claimBlockHeight
           }
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishContest {contestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
+          , duty = Just PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
           }
       )
   | otherwise = error "Invalid claim transaction"
@@ -643,7 +660,7 @@ processClaim GraphSigned {..} tx claimBlockHeight
           }
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishContest {contestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
+          , duty = Just PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
           }
       )
   | otherwise = error "Invalid claim transaction"
@@ -657,7 +674,7 @@ processClaim NoncesCollected {..} tx claimBlockHeight
           }
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishContest {contestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
+          , duty = Just PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction
           }
       )
   | otherwise = error "Invalid claim transaction"
@@ -671,14 +688,20 @@ processContest Claimed {..} tx contestBlockHeight
           }
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishBridgeProof {depositIdx, operatorIdx}
+          , duty =
+              Just
+                PublishBridgeProof
+                  { depositIdx
+                  , operatorIdx
+                  , bridgeProofTx = "bridge_proof_tx_placeholder" -- Placeholder for bridge proof transaction
+                  }
           }
       )
   | otherwise = error "Invalid contest transaction"
 processContest Contested {} _ _ = error "Graph already contested"
 processContest state _ _ = error $ "Invalid state for contest: " ++ show state
 
-processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
+processBridgeProof Contested {..} tx bridgeProofBlockHeight
   | (contest graphSummary, 0) `elem` inpoints tx =
       let proof = "proof_placeholder" -- Placeholder for proof (needs to be extracted from tx)
       in  ( BridgeProofPosted
@@ -695,14 +718,14 @@ processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
                     PublishCounterProof
                       { depositIdx
                       , operatorIdx
-                      , contestOutPoint = (contest graphSummary, 3 + povIdx opTable)
+                      , counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction
                       , proof = proof
                       }
               }
           )
   | otherwise = error "Invalid bridge proof transaction"
-processBridgeProof BridgeProofPosted {} _ _ _ = error "Bridge proof already posted"
-processBridgeProof state _ _ _ = error $ "Invalid state for bridge proof: " ++ show state
+processBridgeProof BridgeProofPosted {} _ _ = error "Bridge proof already posted"
+processBridgeProof state _ _ = error $ "Invalid state for bridge proof: " ++ show state
 
 processBridgeProofTimeout Contested {..} tx
   | txid tx == bridgeProofTimeout graphSummary =
@@ -727,6 +750,7 @@ processCounterProof BridgeProofPosted {..} tx counterproofBlockHeight =
               PublishCounterProofNack
                 { depositIdx = depositIdx
                 , counterProverIdx = counterProverIdx
+                , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
                 , labels = labels
                 }
           newCounterProofs =
@@ -762,6 +786,7 @@ processCounterProof CounterProofPosted {..} tx counterproofBlockHeight =
                   PublishCounterProofNack
                     { depositIdx = depositIdx
                     , counterProverIdx = counterProverIdx
+                    , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
                     , labels = "labels_placeholder" :| [] -- Placeholder for labels (needs to be extracted from tx)
                     }
               else Nothing
@@ -879,7 +904,7 @@ mkSlashOutput :: GraphState -> GraphTransitionOutput
 mkSlashOutput state =
   GraphTransitionOutput
     { signal = Just (OperatorSlashed state.operatorIdx)
-    , duty = Just PublishSlash {slashTx = "slash_tx_placeholder"} -- Placeholder for slash transaction
+    , duty = Just PublishSlash {signedSlashTx = "slash_tx_placeholder"} -- Placeholder for slash transaction
     }
 
 -- check if the block is new
@@ -892,7 +917,7 @@ notifyNewBlock curState@Claimed {..} _opTable newBlockHeight
       ( curState {blockHeight = newBlockHeight}
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishUncontestedPayout {uncontestedPayoutTx = "uncontested_payout_tx_placeholder"} -- Placeholder for uncontested payout transaction
+          , duty = Just PublishUncontestedPayout {signedUncontestedPayoutTx = "uncontested_payout_tx_placeholder"} -- Placeholder for uncontested payout transaction
           }
       )
   | otherwise = (curState {blockHeight = newBlockHeight}, emptyOutput)
@@ -904,7 +929,7 @@ notifyNewBlock curState@Contested {..} _opTable newBlockHeight
       ( curState {blockHeight = newBlockHeight}
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishBridgeProofTimeout {timeoutTx = "bridge_proof_timeout_tx_placeholder"} -- Placeholder for bridge proof timeout transaction
+          , duty = Just PublishBridgeProofTimeout {signedTimeoutTx = "bridge_proof_timeout_tx_placeholder"} -- Placeholder for bridge proof timeout transaction
           }
       )
   | otherwise = (curState {blockHeight = newBlockHeight}, emptyOutput)
@@ -917,7 +942,7 @@ notifyNewBlock curState@CounterProofPosted {..} opTable newBlockHeight
       ( curState {blockHeight = newBlockHeight}
       , GraphTransitionOutput
           { signal = Nothing
-          , duty = Just PublishContestedPayout {contestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
+          , duty = Just PublishContestedPayout {signedContestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
           }
       )
   | otherwise =
@@ -928,7 +953,7 @@ notifyNewBlock curState@CounterProofPosted {..} opTable newBlockHeight
               ( curState {blockHeight = newBlockHeight}
               , GraphTransitionOutput
                   { signal = Nothing
-                  , duty = Just PublishCounterProofAck {counterProofAckTx = "counterproof_ack_tx_placeholder"} -- Placeholder for counterproof ACK transaction
+                  , duty = Just PublishCounterProofAck {signedCounterProofAckTx = "counterproof_ack_tx_placeholder"} -- Placeholder for counterproof ACK transaction
                   }
               )
             else (curState {blockHeight = newBlockHeight}, emptyOutput)
@@ -939,7 +964,7 @@ notifyNewBlock curState _opTable newBlockHeight = case curState of
         ( curState
         , GraphTransitionOutput
             { signal = Nothing
-            , duty = Just PublishContestedPayout {contestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
+            , duty = Just PublishContestedPayout {signedContestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
             }
         )
     | newBlockHeight > contestBlockHeight + payoutTimeout ->
@@ -955,7 +980,7 @@ notifyNewBlock curState _opTable newBlockHeight = case curState of
         ( curState {blockHeight = newBlockHeight}
         , GraphTransitionOutput
             { signal = Nothing
-            , duty = Just PublishContestedPayout {contestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
+            , duty = Just PublishContestedPayout {signedContestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
             }
         )
     | newBlockHeight > contestBlockHeight + payoutTimeout ->
@@ -1033,17 +1058,22 @@ processRetryTick state _opTable = case state of
   GraphGenerated {} ->
     Set.singleton VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighash generation from graph data
   Fulfilled {} ->
-    Set.singleton PublishClaim {claimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction generation and finalization
+    Set.singleton PublishClaim {signedClaimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction generation and finalization
   Claimed {} ->
-    Set.singleton PublishContest {contestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction generation and finalization
+    Set.singleton PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction generation and finalization
   Contested {..} ->
-    Set.singleton PublishBridgeProof {depositIdx, operatorIdx}
+    Set.singleton
+      PublishBridgeProof
+        { depositIdx
+        , operatorIdx
+        , bridgeProofTx = "bridge_proof_tx_placeholder" -- Placeholder for bridge proof transaction generation and finalization
+        }
   BridgeProofPosted {..} ->
     Set.singleton
       PublishCounterProof
         { depositIdx
         , operatorIdx
-        , contestOutPoint = (contest graphSummary, 3 + povIdx _opTable)
+        , counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction generation (unsigned)
         , proof = proof
         }
   CounterProofPosted {..} ->
@@ -1055,6 +1085,7 @@ processRetryTick state _opTable = case state of
               PublishCounterProofNack
                 { depositIdx
                 , counterProverIdx
+                , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction generation (unsigned)
                 , labels = counterProofLabels Map.! counterProverIdx
                 }
           )
