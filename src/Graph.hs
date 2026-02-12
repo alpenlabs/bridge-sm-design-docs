@@ -417,7 +417,7 @@ data NagDuty
 -- Signals
 -- The messages that need to be propagated across state machines
 data GraphSignal
-  = GraphAvailable OperatorIdx -- signifies that the graph is fully signed and available for use for unilateral reimbursement
+  = GraphAvailable Txid OperatorIdx -- signifies that the graph is fully signed and available for use for unilateral reimbursement using the given claim txid
   | OperatorSlashed OperatorIdx -- signifies that the operator has been slashed
   deriving (Show, Eq, Ord)
 
@@ -550,6 +550,7 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
               else error $ "Partial Signature Verification Failed for Operator: " ++ show opIdx
           else error $ "Duplicate partial signatures received from operator: " ++ show opIdx
       expectedOperatorCount = opCardinality execConfig
+      claimTxid = claim graphSummary
   in  if Map.size newPartials == expectedOperatorCount
         then
           ( GraphSigned
@@ -557,7 +558,7 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
               , ..
               }
           , GraphTransitionOutput
-              { signal = Just (GraphAvailable operatorIdx)
+              { signal = Just (GraphAvailable claimTxid operatorIdx)
               , duty = Nothing
               }
           )

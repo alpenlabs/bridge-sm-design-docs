@@ -78,6 +78,7 @@ data DepositState
       , depositRequestOutPoint :: OutPoint
       , outputIndex :: U32
       , blockHeight :: U32
+      , claimTxid :: Txid -- the txid of the claim transaction (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
       , pubnonces :: Map.Map OperatorIdx PubNonce -- pubnonces required to sign the deposit transaction (per operator)
       }
   | DepositNoncesCollected -- All deposit pubnonces have been collected
@@ -278,7 +279,7 @@ cooperativePayoutWindow = 2016 -- e.g., ~2 weeks assuming 10 min blocks
 
 -- STFs
 -- Definitions
-processGraphGenerated :: DepositState -> ExecConfig -> OperatorIdx -> (DepositState, DepositDuty)
+processGraphGenerated :: DepositState -> ExecConfig -> Txid -> OperatorIdx -> (DepositState, DepositDuty)
 processNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPartial :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processDepositConfirmation :: DepositState -> Transaction -> DepositState
@@ -294,20 +295,21 @@ notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
 processDepositSpend :: DepositState -> Transaction -> DepositState
 processDepositRequestSpend :: DepositState -> Transaction -> DepositState
 -- Implementations
-processGraphGenerated deposit@Created {..} _cfg operatorIdx =
+processGraphGenerated deposit@Created {..} _cfg claimTxid operatorIdx =
   let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
       newState =
         if Set.size linkedGraphs' == opCardinality _cfg
           then
             GraphGenerated
               { pubnonces = mempty
+              , claimTxid = claimTxid
               , ..
               }
           else
             deposit {linkedGraphs = linkedGraphs'}
       duty = PublishDepositNonce {..}
   in  (newState, duty)
-processGraphGenerated _ _ _ = error "Invalid state transition"
+processGraphGenerated _ _ _ _ = error "Invalid state transition"
 
 processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx pubnonces of
