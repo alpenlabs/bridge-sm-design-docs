@@ -167,8 +167,10 @@ data DepositState
 -- Tasks that any operator (signer) has to perform for this deposit (from creation to spend)
 data DepositDuty
   = PublishDepositNonce -- publish this operator's nonce for spending the drt
-      { depositRequestOutPoint :: OutPoint -- DRT outpoint to ID the signing session
+      { depositIdx :: U32
+      , depositRequestOutPoint :: OutPoint -- DRT outpoint to ID the signing session
       , claimTxids :: Map.Map OperatorIdx Txid -- the txid of the claim transaction per operator (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
+      , orderedPubkeys :: [SchnorrKey] -- ordered public keys of all operators for MuSig2 signing
       }
   | PublishDepositPartial -- publish this operator's partial signature for spending the drt
       { depositRequestOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
@@ -253,6 +255,9 @@ opCardinality cfg = Set.size (operators cfg)
 povIdx :: ExecConfig -> OperatorIdx
 povIdx _cfg = 0 -- placeholder implementation
 
+getOrderedPubkeys :: ExecConfig -> [SchnorrKey]
+getOrderedPubkeys cfg = map (\(_, _, schnorrKey, _) -> schnorrKey) $ Set.toAscList (operators cfg)
+
 getFulfillWithdrawalDuty :: DepositState -> ExecConfig -> Maybe DepositDuty
 getFulfillWithdrawalDuty Assigned {..} cfg =
   if povIdx cfg == assignee
@@ -298,11 +303,12 @@ notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
 processDepositSpend :: DepositState -> Transaction -> DepositState
 processDepositRequestSpend :: DepositState -> Transaction -> DepositState
 -- Implementations
-processGraphGenerated deposit@Created {..} _cfg claimTxid operatorIdx =
+processGraphGenerated deposit@Created {..} cfg claimTxid operatorIdx =
   let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
       claimTxids = Map.insert operatorIdx claimTxid claimTxids -- since this comes from an internal signal, no need to error on duplicates
+      orderedPubkeys = getOrderedPubkeys cfg
       newState =
-        if Set.size linkedGraphs' == opCardinality _cfg
+        if Set.size linkedGraphs' == opCardinality cfg
           then
             GraphGenerated
               { pubnonces = mempty
