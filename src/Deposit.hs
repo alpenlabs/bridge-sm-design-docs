@@ -173,10 +173,12 @@ data DepositDuty
       , orderedPubkeys :: [SchnorrKey] -- ordered public keys of all operators for MuSig2 signing
       }
   | PublishDepositPartial -- publish this operator's partial signature for spending the drt
-      { depositRequestOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
+      { depositIdx :: U32
+      , depositRequestOutPoint :: OutPoint -- DRT outpoint to resume the earlier signing session
       , depositSighash :: Sighash -- sighash to be signed for the deposit transaction
       , claimTxids :: Map.Map OperatorIdx Txid -- the txid of the claim transaction per operator (used to make sure that a claim is not already on chain in case of a malicious operator trying to start an early claim that may go unnoticed by GSM)
       , depositAggNonce :: AggNonce -- the aggregate nonce for signing the deposit transaction (used to generate the partial signature)
+      , orderedPubkeys :: [SchnorrKey] -- ordered public keys of all operators for MuSig2 signing
       }
   | PublishDeposit -- publish the deposit transaction to the Bitcoin network
       { signedDepositTx :: Transaction -- the fully signed deposit transaction ready to be broadcast
@@ -327,6 +329,7 @@ processNonce deposit@GraphGenerated {..} cfg nonce operatorIdx =
       error $ "Duplicate nonce received from operator: " ++ show operatorIdx
     Nothing ->
       let newNonces = Map.insert operatorIdx nonce pubnonces
+          orderedPubkeys = getOrderedPubkeys cfg
           (newState, duty) =
             if Map.size newNonces == opCardinality cfg
               then
