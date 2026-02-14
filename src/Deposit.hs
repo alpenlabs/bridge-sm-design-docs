@@ -43,6 +43,7 @@ type Sighash = String -- placeholder
 type P2pKey = String -- placeholder
 type SchnorrKey = String -- placeholder
 type AdaptorKey = String -- placeholder
+type Amount = U32 -- placeholder for BTC amount
 
 newtype DepositTx = DepositTx
   { tx :: Transaction -- this is derived from a DRT
@@ -187,6 +188,7 @@ data DepositDuty
       { depositIdx :: DepositIdx
       , deadline :: BitcoinBlockHeight
       , recipientDesc :: BtcDescriptor -- the user's descriptor where funds are to be sent by the operator
+      , depositAmount :: Amount -- the fixed deposit amount expected by the bridge protocol
       }
   | -- request pubnonces from *all* operators for cooperative payout
     -- this duty execution will generate the operator's descriptor (which will then be stored in state)
@@ -245,8 +247,9 @@ data NagDuty
   deriving (Show, Eq, Ord)
 
 -- Additional Types
-newtype ExecConfig = ExecConfig
+data ExecConfig = ExecConfig
   { operators :: Set.Set (OperatorIdx, P2pKey, SchnorrKey, AdaptorKey)
+  , depositAmount :: Amount -- the fixed deposit amount expected by the bridge protocol
   }
   deriving (Show, Eq)
 
@@ -260,6 +263,9 @@ povIdx _cfg = 0 -- placeholder implementation
 getOrderedPubkeys :: ExecConfig -> [SchnorrKey]
 getOrderedPubkeys cfg = map (\(_, _, schnorrKey, _) -> schnorrKey) $ Set.toAscList (operators cfg)
 
+getDepositAmount :: ExecConfig -> Amount
+getDepositAmount ExecConfig {depositAmount = amt} = amt
+
 getFulfillWithdrawalDuty :: DepositState -> ExecConfig -> Maybe DepositDuty
 getFulfillWithdrawalDuty Assigned {..} cfg =
   if povIdx cfg == assignee
@@ -269,6 +275,7 @@ getFulfillWithdrawalDuty Assigned {..} cfg =
           { depositIdx = depositIdx
           , deadline = deadline
           , recipientDesc = recipientDesc
+          , depositAmount = getDepositAmount cfg
           }
     else Nothing
 getFulfillWithdrawalDuty _ _ = Nothing
@@ -605,7 +612,7 @@ lastProcessedBlock state = case state of
 -- Retry Handlers
 -- Declarations
 processNagTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
-processRetryTick :: DepositState -> Set.Set DepositDuty
+processRetryTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
 -- Definitions
 processNagTick state cfg =
   let expectedIds = Set.map (\(idx, _, _, _) -> idx) $ operators cfg
@@ -632,7 +639,7 @@ processNagTick state cfg =
           )
         $ Set.toList missingIds
 
-processRetryTick state = case state of
+processRetryTick state cfg = case state of
   DepositPartialsCollected {..} ->
     Set.singleton PublishDeposit {signedDepositTx = signedDepositTx}
   Assigned {..} ->
@@ -641,6 +648,7 @@ processRetryTick state = case state of
         { depositIdx = depositIdx
         , deadline = deadline
         , recipientDesc = recipientDesc
+        , depositAmount = getDepositAmount cfg
         }
   Fulfilled {..} ->
     Set.singleton RequestPayoutNonce {depositIdx = depositIdx}
