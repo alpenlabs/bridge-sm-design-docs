@@ -196,6 +196,7 @@ data DepositDuty
     -- only the assignee creates this duty
     RequestPayoutNonce
       { depositIdx :: DepositIdx
+      , povOperatorIdx :: OperatorIdx -- the index of the point-of-view operator
       }
   | PublishPayoutNonces -- publish the nonce for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
@@ -445,8 +446,9 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
           , cooperativePayoutDeadline = fulfillmentBlockHeight + cooperativePayoutWindow
           , ..
           }
+      povOperatorIdx = povIdx cfg
       duty =
-        if assignee == povIdx cfg
+        if assignee == povOperatorIdx
           then Just RequestPayoutNonce {..}
           else Nothing
   in  (newState, duty)
@@ -651,7 +653,7 @@ processRetryTick state cfg = case state of
         , depositAmount = getDepositAmount cfg
         }
   Fulfilled {..} ->
-    Set.singleton RequestPayoutNonce {depositIdx = depositIdx}
+    Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
   PayoutNoncesCollected {..} ->
     Set.singleton
       PublishPayoutPartial
