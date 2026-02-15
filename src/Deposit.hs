@@ -308,7 +308,7 @@ processAssignment
   :: DepositState -> ExecConfig -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processFulfillment
   :: DepositState -> ExecConfig -> Transaction -> BitcoinBlockHeight -> (DepositState, Maybe DepositDuty)
-processPayoutDescriptor :: DepositState -> ExecConfig -> BtcDescriptor -> (DepositState, DepositDuty)
+processPayoutDescriptor :: DepositState -> ExecConfig -> BtcDescriptor -> OperatorIdx -> (DepositState, DepositDuty)
 processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial
   :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
@@ -457,17 +457,26 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
   in  (newState, duty)
 processFulfillment _ _ _ _ = error "Invalid state transition"
 
-processPayoutDescriptor Fulfilled {..} cfg payoutOutputDesc =
-  let newState =
-        PayoutDescriptorReceived
-          { payoutOutputDesc = payoutOutputDesc
-          , payoutNonces = mempty
-          , ..
-          }
-      orderedPubkeys = getOrderedPubkeys cfg
-      duty = PublishPayoutNonces {..}
-  in  (newState, duty)
-processPayoutDescriptor _ _ _ = error "Invalid state transition"
+processPayoutDescriptor Fulfilled {..} cfg payoutOutputDesc operatorIdx =
+  if operatorIdx /= assignee
+    then
+      error $
+        "Payout descriptor received from unauthorized operator: "
+          ++ show operatorIdx
+          ++ " (expected assignee: "
+          ++ show assignee
+          ++ ")"
+    else
+      let newState =
+            PayoutDescriptorReceived
+              { payoutOutputDesc = payoutOutputDesc
+              , payoutNonces = mempty
+              , ..
+              }
+          orderedPubkeys = getOrderedPubkeys cfg
+          duty = PublishPayoutNonces {..}
+      in  (newState, duty)
+processPayoutDescriptor _ _ _ _ = error "Invalid state transition"
 
 processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx payoutNonces of
