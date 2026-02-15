@@ -214,10 +214,11 @@ data DepositDuty
     -- The extra fields (aggNonce, collectedPartials) are needed for generating the assignee's partial.
     PublishPayout
       { depositOutPoint :: OutPoint
-      , depositIdx :: DepositIdx
       , aggNonce :: AggNonce
-      , payoutTx :: Transaction
-      , collectedPartials :: Map.Map OperatorIdx PartialSignature -- partial signatures per operator for signing the cooperative payout transaction
+      , collectedPartials :: Map.Map OperatorIdx PartialSignature -- partial signatures collected from other operators (not including assignee)
+      , payoutCoopTx :: Transaction
+      , orderedPubkeys :: [SchnorrKey]
+      , povOperatorIdx :: OperatorIdx
       }
   | -- nag other operators for missing information
     Nag
@@ -521,12 +522,14 @@ processPayoutPartial deposit@PayoutNoncesCollected {..} cfg partialSig operatorI
                     if Map.size newPartials == opCardinality cfg - 1
                       then
                         let newState' = deposit {payoutPartialSignatures = newPartials}
+                            orderedPubkeys = getOrderedPubkeys cfg
+                            povOperatorIdx = povIdx cfg
                             duty' =
-                              if assignee == povIdx cfg
+                              if assignee == povOperatorIdx
                                 then
                                   Just
                                     PublishPayout
-                                      { payoutTx = "payout_transaction_placeholder"
+                                      { payoutCoopTx = "payout_transaction_placeholder"
                                       , collectedPartials = newPartials
                                       , aggNonce = payoutAggNonce
                                       , ..
