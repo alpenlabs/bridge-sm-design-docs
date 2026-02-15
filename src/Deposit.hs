@@ -634,7 +634,10 @@ processNagTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
 processRetryTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
 -- Definitions
 processNagTick state cfg =
-  let expectedIds = Set.map (\(idx, _, _, _) -> idx) $ operators cfg
+  let allOperatorIds = Set.map (\(idx, _, _, _) -> idx) $ operators cfg
+      expectedIds = case state of
+        PayoutNoncesCollected {..} -> Set.delete assignee allOperatorIds
+        _ -> allOperatorIds
       presentIds = Map.keysSet $ case state of
         GraphGenerated {pubnonces} -> pubnonces
         DepositNoncesCollected {partialSignatures} -> partialSignatures
@@ -661,24 +664,30 @@ processNagTick state cfg =
 processRetryTick state cfg = case state of
   DepositPartialsCollected {..} ->
     Set.singleton PublishDeposit {signedDepositTx = signedDepositTx}
-  Assigned {..} ->
-    Set.singleton
-      FulfillWithdrawal
-        { depositIdx = depositIdx
-        , deadline = deadline
-        , recipientDesc = recipientDesc
-        , depositAmount = getDepositAmount cfg
-        }
-  Fulfilled {..} ->
-    Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
-  PayoutNoncesCollected {..} ->
-    Set.singleton
-      PublishPayoutPartial
-        { depositIdx = depositIdx
-        , depositOutPoint = depositOutPoint
-        , payoutSighash = "payout_sighash_placeholder" -- Placeholder for actual payout sighash
-        , aggNonce = payoutAggNonce
-        , orderedPubkeys = getOrderedPubkeys cfg
-        }
+  Assigned {..}
+    | povIdx cfg == assignee ->
+        Set.singleton
+          FulfillWithdrawal
+            { depositIdx = depositIdx
+            , deadline = deadline
+            , recipientDesc = recipientDesc
+            , depositAmount = getDepositAmount cfg
+            }
+    | otherwise -> Set.empty
+  Fulfilled {..}
+    | assignee == povIdx cfg ->
+        Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
+    | otherwise -> Set.empty
+  PayoutNoncesCollected {..}
+    | assignee /= povIdx cfg ->
+        Set.singleton
+          PublishPayoutPartial
+            { depositIdx = depositIdx
+            , depositOutPoint = depositOutPoint
+            , payoutSighash = "payout_sighash_placeholder" -- Placeholder for actual payout sighash
+            , aggNonce = payoutAggNonce
+            , orderedPubkeys = getOrderedPubkeys cfg
+            }
+    | otherwise -> Set.empty
   -- the rest of the duties need not be retried
   _ -> Set.empty
