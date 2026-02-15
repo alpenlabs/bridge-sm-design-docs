@@ -199,9 +199,9 @@ data DepositDuty
       , povOperatorIdx :: OperatorIdx -- the index of the point-of-view operator
       }
   | PublishPayoutNonces -- publish the nonce for spending the deposit utxo cooperatively
-      { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
-      , operatorIdx :: OperatorIdx -- the index of the operator requesting cooperation for payout (could be the same as this operator)
-      , payoutOutputDesc :: BtcDescriptor -- descriptor of the operator to receive payout
+      { depositIdx :: DepositIdx -- the index of the deposit
+      , depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
+      , orderedPubkeys :: [SchnorrKey] -- ordered public keys of all operators for MuSig2 signing
       }
   | PublishPayoutPartial -- publish the partial signature for spending the deposit utxo cooperatively
       { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
@@ -305,7 +305,7 @@ processAssignment
   :: DepositState -> ExecConfig -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (DepositState, Maybe DepositDuty)
 processFulfillment
   :: DepositState -> ExecConfig -> Transaction -> BitcoinBlockHeight -> (DepositState, Maybe DepositDuty)
-processPayoutDescriptor :: DepositState -> BtcDescriptor -> (DepositState, DepositDuty)
+processPayoutDescriptor :: DepositState -> ExecConfig -> BtcDescriptor -> (DepositState, DepositDuty)
 processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial
   :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
@@ -454,16 +454,17 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
   in  (newState, duty)
 processFulfillment _ _ _ _ = error "Invalid state transition"
 
-processPayoutDescriptor Fulfilled {..} payoutOutputDesc =
+processPayoutDescriptor Fulfilled {..} cfg payoutOutputDesc =
   let newState =
         PayoutDescriptorReceived
           { payoutOutputDesc = payoutOutputDesc
           , payoutNonces = mempty
           , ..
           }
-      duty = PublishPayoutNonces {operatorIdx = assignee, ..}
+      orderedPubkeys = getOrderedPubkeys cfg
+      duty = PublishPayoutNonces {..}
   in  (newState, duty)
-processPayoutDescriptor _ _ = error "Invalid state transition"
+processPayoutDescriptor _ _ _ = error "Invalid state transition"
 
 processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
   case Map.lookup operatorIdx payoutNonces of
