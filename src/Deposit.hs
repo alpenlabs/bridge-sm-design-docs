@@ -204,9 +204,11 @@ data DepositDuty
       , orderedPubkeys :: [SchnorrKey] -- ordered public keys of all operators for MuSig2 signing
       }
   | PublishPayoutPartial -- publish the partial signature for spending the deposit utxo cooperatively
-      { depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
-      , depositIdx :: DepositIdx
-      , aggNonce :: AggNonce
+      { depositIdx :: DepositIdx -- the index of the deposit
+      , depositOutPoint :: OutPoint -- outpoint referencing the deposit utxo
+      , payoutSighash :: Sighash -- sighash to be signed for the payout transaction
+      , aggNonce :: AggNonce -- aggregated nonce for the payout transaction signing
+      , orderedPubkeys :: [SchnorrKey] -- ordered public keys of all operators for MuSig2 signing
       }
   | -- The assignee generates their own partial signature as well as signing and broadcasting the payout tx.
     -- The extra fields (aggNonce, collectedPartials) are needed for generating the assignee's partial.
@@ -476,6 +478,8 @@ processPayoutNonce deposit@PayoutDescriptorReceived {..} cfg nonce operatorIdx =
             if Map.size newPayoutNonces == opCardinality cfg
               then
                 let aggNonce = "payout_agg_nonce_placeholder" -- Placeholder for actual aggregation logic
+                    payoutSighash = "payout_sighash_placeholder" -- Placeholder for actual payout sighash
+                    orderedPubkeys = getOrderedPubkeys cfg
                     newState' =
                       PayoutNoncesCollected
                         { payoutNonces = newPayoutNonces
@@ -658,9 +662,11 @@ processRetryTick state cfg = case state of
   PayoutNoncesCollected {..} ->
     Set.singleton
       PublishPayoutPartial
-        { depositOutPoint = depositOutPoint
-        , depositIdx = depositIdx
+        { depositIdx = depositIdx
+        , depositOutPoint = depositOutPoint
+        , payoutSighash = "payout_sighash_placeholder" -- Placeholder for actual payout sighash
         , aggNonce = payoutAggNonce
+        , orderedPubkeys = getOrderedPubkeys cfg
         }
   -- the rest of the duties need not be retried
   _ -> Set.empty
