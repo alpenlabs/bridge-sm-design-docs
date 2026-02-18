@@ -727,6 +727,35 @@ processBridgeProofTimeout Contested {..} tx
 processBridgeProofTimeout BridgeProofTimedout {} _ = error "Bridge proof timeout already processed"
 processBridgeProofTimeout state _ = error $ "Invalid state for bridge proof timeout: " ++ show state
 
+processCounterProof Contested {..} tx counterproofBlockHeight =
+  case find (\(_opIdx, txid') -> txid' == txid tx) (Map.toList $ counterproofs graphSummary) of
+    Just (counterProverIdx, _) ->
+      let labels = "labels_placeholder" :| [] -- Placeholder for labels (needs to be extracted from tx)
+          duty =
+            -- this will be discarded by the executor if counterProverIdx is the same as povIdx
+            Just
+              PublishCounterProofNack
+                { depositIdx = depositIdx
+                , counterProverIdx = counterProverIdx
+                , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
+                , labels = labels
+                }
+          newCounterProofs =
+            Map.singleton counterProverIdx (txid tx, counterproofBlockHeight)
+          newCounterProofLabels =
+            Map.singleton counterProverIdx labels
+      in  ( CounterProofPosted
+              { counterProofsAndConfs = newCounterProofs
+              , counterProofNacks = mempty
+              , counterProofLabels = newCounterProofLabels
+              , ..
+              }
+          , GraphTransitionOutput
+              { signal = Nothing
+              , duty = duty
+              }
+          )
+    Nothing -> error "Invalid counterproof transaction"
 processCounterProof BridgeProofPosted {..} tx counterproofBlockHeight =
   case find (\(_opIdx, txid') -> txid' == txid tx) (Map.toList $ counterproofs graphSummary) of
     Just (counterProverIdx, _) ->
