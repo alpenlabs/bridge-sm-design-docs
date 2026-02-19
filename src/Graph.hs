@@ -442,7 +442,7 @@ emptyOutput =
 
 -- State Transition Functions
 -- Declarations
-processGraphData :: GraphState -> GraphData -> (GraphState, GraphTransitionOutput) -- Created -> GraphGenerated
+processGraphData :: GraphState -> OperatorTable -> GraphData -> (GraphState, GraphTransitionOutput) -- Created -> GraphGenerated
 processAdaptorsVerification :: GraphState -> (GraphState, GraphTransitionOutput) -- GraphGenerated -> AdaptorsVerified
 processNonces :: GraphState -> OperatorTable -> (OperatorIdx, NonEmpty Nonce) -> (GraphState, GraphTransitionOutput) -- AdaptorsVerified -> NoncesCollected
 processPartials
@@ -464,19 +464,36 @@ processPayout :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput
 processPayoutConnectorSpent :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- [`Claimed`..`CounterProofPosted`] -> Aborted
 notifyNewBlock :: GraphState -> OperatorTable -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- \* -> *TimedOut
 -- Definitions
-processGraphData Created {..} graphData =
+processGraphData Created {..} opTable graphData =
   let graphSummary = summarize graphData
-  in  ( GraphGenerated
-          { graphSummary
-          , ..
-          }
-      , GraphTransitionOutput
-          { signal = Nothing
-          , duty = Just VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighashes
-          }
-      )
-processGraphData GraphGenerated {} _ = error "Graph data already generated"
-processGraphData _ _ = error "Invalid state for graph data"
+  in  if povIdx opTable /= operatorIdx -- not my graph, so need to verify adaptors
+        then
+          ( GraphGenerated
+              { graphSummary
+              , ..
+              }
+          , GraphTransitionOutput
+              { signal = Nothing
+              , duty = Just VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighashes
+              }
+          )
+        -- my graph does not need verification of adaptors, so skip directly to `AdaptorsVerified` state with empty nonces map
+        else
+          ( AdaptorsVerified {nonces = mempty, ..}
+          , GraphTransitionOutput
+              { signal = Nothing
+              , duty =
+                  Just
+                    PublishGraphNonces
+                      { depositIdx
+                      , operatorIdx
+                      , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
+                      , graphTweaks = NonEmpty.fromList [Nothing]
+                      }
+              }
+          )
+processGraphData GraphGenerated {} _ _ = error "Graph data already generated"
+processGraphData _ _ _ = error "Invalid state for graph data"
 
 processAdaptorsVerification GraphGenerated {..} =
   ( AdaptorsVerified
