@@ -233,6 +233,8 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , coopPayoutFailed :: Bool -- whether cooperative payout has failed and unilateral claim path is activated
+      , assignee :: OperatorIdx -- the operator assigned to fulfill the withdrawal
       , fulfillmentTxid :: Txid -- the txid of the fulfillment transaction submitted on chain
       , fulfillmentBlockHeight :: BitcoinBlockHeight -- the block height at which the fulfillment transaction was confirmed
       }
@@ -450,7 +452,7 @@ processPartials
 processAssignment
   :: GraphState -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (GraphState, GraphTransitionOutput) -- GraphSigned/Assigned -> Assigned/GraphSigned
 processFulfillment :: GraphState -> Txid -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Assigned -> Fulfilled
-processActivation :: GraphState -> (GraphState, GraphTransitionOutput) -- Fulfilled -> (no state change, triggers unilateral reimbursement process)
+processActivation :: GraphState -> OperatorTable -> (GraphState, GraphTransitionOutput) -- Fulfilled {coopPayoutFailed = False}  -> Fulfilled { coopPayoutFailed = True}
 processClaim :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Fulfilled/Assigned/GraphSigned/NoncesCollected -> Claimed
 processContest :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Claimed -> Contested
 processBridgeProof
@@ -622,27 +624,29 @@ processAssignment state _ _ _ = error $ "Invalid state for assignment: " ++ show
 
 processFulfillment Assigned {..} fulfillmentTxid fulfillmentBlockHeight =
   ( Fulfilled
-      { ..
+      { coopPayoutFailed = False
+      , ..
       }
-  , GraphTransitionOutput
-      { signal = Nothing
-      , duty = Just PublishClaim {signedClaimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction
-      }
+  , emptyOutput
   )
-processFulfillment Fulfilled {} _ _ = error "Graph already activated"
-processFulfillment state _ _ = error $ "Invalid state for activation" ++ show state
+processFulfillment Fulfilled {} _ _ = error "Graph already fulfilled"
+processFulfillment state _ _ = error $ "Invalid state for fulfillment" ++ show state
 
-processActivation Fulfilled {..} =
+processActivation Fulfilled {..} opTable =
   ( Fulfilled
-      { ..
+      { coopPayoutFailed = True
+      , ..
       }
   , GraphTransitionOutput
       { signal = Nothing
-      , -- Publishing of claim is idempotent so it is fine to create duties multiple times in this state (if neede)
-        duty = Just PublishClaim {signedClaimTx = "placeholder_claim_tx"} -- Placeholder for claim transaction
+      , -- Publishing of claim is idempotent so it is fine to create duties multiple times in this state (if needed)
+        duty =
+          if assignee == povIdx opTable
+            then Just PublishClaim {signedClaimTx = "placeholder_claim_tx"} -- Placeholder for claim transaction
+            else Nothing
       }
   )
-processActivation state = error $ "Invalid state for activation" ++ show state
+processActivation state _ = error $ "Invalid state for activation" ++ show state
 
 processClaim Fulfilled {..} tx claimBlockHeight
   | txid tx == claim graphSummary =
@@ -1088,8 +1092,10 @@ processRetryTick state _opTable = case state of
     Set.singleton GenerateGraphData
   GraphGenerated {} ->
     Set.singleton VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighash generation from graph data
-  Fulfilled {} ->
-    Set.singleton PublishClaim {signedClaimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction generation and finalization
+  Fulfilled {..}
+    | coopPayoutFailed ->
+        Set.singleton PublishClaim {signedClaimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction generation and finalization
+    | otherwise -> Set.empty
   Claimed {} ->
     Set.singleton PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction generation and finalization
   Contested {..} ->
