@@ -454,11 +454,13 @@ processAssignment
 processFulfillment :: GraphState -> Txid -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Assigned -> Fulfilled
 processActivation :: GraphState -> OperatorTable -> (GraphState, GraphTransitionOutput) -- Fulfilled {coopPayoutFailed = False}  -> Fulfilled { coopPayoutFailed = True}
 processClaim :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Fulfilled/Assigned/GraphSigned/NoncesCollected -> Claimed
-processContest :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Claimed -> Contested
+processContest
+  :: GraphState -> OperatorTable -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Claimed -> Contested
 processBridgeProof
-  :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Contested -> BridgeProofPosted
+  :: GraphState -> OperatorTable -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Contested -> BridgeProofPosted
 processBridgeProofTimeout :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- Contested -> BridgeProofTimedout
-processCounterProof :: GraphState -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- BridgeProofPosted/CounterProofPosted -> CounterProofPosted
+processCounterProof
+  :: GraphState -> OperatorTable -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- BridgeProofPosted/CounterProofPosted -> CounterProofPosted
 processCounterProofAckd :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- CounterProofPosted -> Acked
 processCounterProofNackd :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- CounterProofPosted -> AllNackd
 processSlash :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- BridgeProofTimedout/Acked -> Slashed
@@ -651,8 +653,8 @@ processActivation state _ = error $ "Invalid state for activation" ++ show state
 processClaim Fulfilled {..} tx claimBlockHeight
   | txid tx == claim graphSummary =
       ( Claimed
-          { fulfillmentTxid' = Nothing
-          , fulfillmentBlockHeight' = Nothing
+          { fulfillmentTxid' = Just fulfillmentTxid
+          , fulfillmentBlockHeight' = Just fulfillmentBlockHeight
           , ..
           }
       , emptyOutput
@@ -689,7 +691,7 @@ processClaim GraphSigned {..} tx claimBlockHeight
 -- Invalid cases
 processClaim state _ _ = error $ "Invalid state for claim: " ++ show state
 
-processContest Claimed {..} tx contestBlockHeight
+processContest Claimed {..} opTable tx contestBlockHeight
   | txid tx == contest graphSummary =
       ( Contested
           { ..
@@ -697,19 +699,22 @@ processContest Claimed {..} tx contestBlockHeight
       , GraphTransitionOutput
           { signal = Nothing
           , duty =
-              Just
-                PublishBridgeProof
-                  { depositIdx
-                  , operatorIdx
-                  , bridgeProofTx = "bridge_proof_tx_placeholder" -- Placeholder for bridge proof transaction
-                  }
+              if operatorIdx == povIdx opTable
+                then
+                  Just
+                    PublishBridgeProof
+                      { depositIdx
+                      , operatorIdx
+                      , bridgeProofTx = "bridge_proof_tx_placeholder" -- Placeholder for bridge proof transaction
+                      }
+                else Nothing
           }
       )
   | otherwise = error "Invalid contest transaction"
-processContest Contested {} _ _ = error "Graph already contested"
-processContest state _ _ = error $ "Invalid state for contest: " ++ show state
+processContest Contested {} _ _ _ = error "Graph already contested"
+processContest state _ _ _ = error $ "Invalid state for contest: " ++ show state
 
-processBridgeProof Contested {..} tx bridgeProofBlockHeight
+processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
   | (contest graphSummary, 0) `elem` inpoints tx =
       let proof = "proof_placeholder" -- Placeholder for proof (needs to be extracted from tx)
       in  ( BridgeProofPosted
@@ -720,20 +725,21 @@ processBridgeProof Contested {..} tx bridgeProofBlockHeight
           , GraphTransitionOutput
               { signal = Nothing
               , duty =
-                  -- a graph will either produce a bridge proof or a counterproof
-                  -- so this duty may be discarded by the executor if the graph belongs to the prover
-                  Just
-                    PublishCounterProof
-                      { depositIdx
-                      , operatorIdx
-                      , counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction
-                      , proof = proof
-                      }
+                  if operatorIdx /= povIdx opTable
+                    then
+                      Just
+                        PublishCounterProof
+                          { depositIdx
+                          , operatorIdx
+                          , counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction
+                          , proof = proof
+                          }
+                    else Nothing
               }
           )
   | otherwise = error "Invalid bridge proof transaction"
-processBridgeProof BridgeProofPosted {} _ _ = error "Bridge proof already posted"
-processBridgeProof state _ _ = error $ "Invalid state for bridge proof: " ++ show state
+processBridgeProof BridgeProofPosted {} _ _ _ = error "Bridge proof already posted"
+processBridgeProof state _ _ _ = error $ "Invalid state for bridge proof: " ++ show state
 
 processBridgeProofTimeout Contested {..} tx
   | txid tx == bridgeProofTimeout graphSummary =
@@ -748,19 +754,21 @@ processBridgeProofTimeout Contested {..} tx
 processBridgeProofTimeout BridgeProofTimedout {} _ = error "Bridge proof timeout already processed"
 processBridgeProofTimeout state _ = error $ "Invalid state for bridge proof timeout: " ++ show state
 
-processCounterProof Contested {..} tx counterproofBlockHeight =
+processCounterProof Contested {..} opTable tx counterproofBlockHeight =
   case find (\(_opIdx, txid') -> txid' == txid tx) (Map.toList $ counterproofs graphSummary) of
     Just (counterProverIdx, _) ->
       let labels = "labels_placeholder" :| [] -- Placeholder for labels (needs to be extracted from tx)
           duty =
-            -- this will be discarded by the executor if counterProverIdx is the same as povIdx
-            Just
-              PublishCounterProofNack
-                { depositIdx = depositIdx
-                , counterProverIdx = counterProverIdx
-                , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
-                , labels = labels
-                }
+            if operatorIdx == povIdx opTable
+              then
+                Just
+                  PublishCounterProofNack
+                    { depositIdx = depositIdx
+                    , counterProverIdx = counterProverIdx
+                    , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
+                    , labels = labels
+                    }
+              else Nothing
           newCounterProofs =
             Map.singleton counterProverIdx (txid tx, counterproofBlockHeight)
           newCounterProofLabels =
@@ -777,19 +785,21 @@ processCounterProof Contested {..} tx counterproofBlockHeight =
               }
           )
     Nothing -> error "Invalid counterproof transaction"
-processCounterProof BridgeProofPosted {..} tx counterproofBlockHeight =
+processCounterProof BridgeProofPosted {..} opTable tx counterproofBlockHeight =
   case find (\(_opIdx, txid') -> txid' == txid tx) (Map.toList $ counterproofs graphSummary) of
     Just (counterProverIdx, _) ->
       let labels = "labels_placeholder" :| [] -- Placeholder for labels (needs to be extracted from tx)
           duty =
-            -- this will be discarded by the executor if counterProverIdx is the same as povIdx
-            Just
-              PublishCounterProofNack
-                { depositIdx = depositIdx
-                , counterProverIdx = counterProverIdx
-                , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
-                , labels = labels
-                }
+            if operatorIdx == povIdx opTable
+              then
+                Just
+                  PublishCounterProofNack
+                    { depositIdx = depositIdx
+                    , counterProverIdx = counterProverIdx
+                    , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction
+                    , labels = labels
+                    }
+              else Nothing
           newCounterProofs =
             Map.singleton counterProverIdx (txid tx, counterproofBlockHeight)
           newCounterProofLabels =
@@ -806,7 +816,7 @@ processCounterProof BridgeProofPosted {..} tx counterproofBlockHeight =
               }
           )
     Nothing -> error "Invalid counterproof transaction"
-processCounterProof CounterProofPosted {..} tx counterproofBlockHeight =
+processCounterProof CounterProofPosted {..} opTable tx counterproofBlockHeight =
   case find (\(_opIdx, txid') -> txid' == txid tx) (Map.toList $ counterproofs graphSummary) of
     Just (counterProverIdx, _) ->
       let isNewCounterProof =
@@ -816,9 +826,8 @@ processCounterProof CounterProofPosted {..} tx counterproofBlockHeight =
               then Map.insert counterProverIdx (txid tx, counterproofBlockHeight) counterProofsAndConfs
               else counterProofsAndConfs -- ignore duplicate counterproofs from same operator
           duty =
-            if isNewCounterProof
+            if isNewCounterProof && operatorIdx == povIdx opTable
               then
-                -- this will be discarded by the executor if counterProverIdx is the same as povIdx
                 Just
                   PublishCounterProofNack
                     { depositIdx = depositIdx
@@ -834,7 +843,7 @@ processCounterProof CounterProofPosted {..} tx counterproofBlockHeight =
           , GraphTransitionOutput {signal = Nothing, duty = duty}
           )
     Nothing -> error "Invalid counterproof transaction"
-processCounterProof state _ _ = error $ "Invalid state for counterproof: " ++ show state
+processCounterProof state _ _ _ = error $ "Invalid state for counterproof: " ++ show state
 
 processCounterProofAckd CounterProofPosted {..} tx
   | txid tx `elem` Map.elems (counterproofAcks graphSummary) =
@@ -1087,45 +1096,55 @@ processNagTick state opTable =
           )
         $ Set.toList missingIds
 
-processRetryTick state _opTable = case state of
+processRetryTick state opTable = case state of
   Created {} ->
     Set.singleton GenerateGraphData
-  GraphGenerated {} ->
-    Set.singleton VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighash generation from graph data
+  GraphGenerated {..}
+    | povIdx opTable /= operatorIdx ->
+        Set.singleton VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighash generation from graph data
+    | otherwise -> Set.empty
   Fulfilled {..}
-    | coopPayoutFailed ->
+    | coopPayoutFailed && assignee == povIdx opTable ->
         Set.singleton PublishClaim {signedClaimTx = "claim_tx_placeholder"} -- Placeholder for claim transaction generation and finalization
     | otherwise -> Set.empty
-  Claimed {} ->
-    Set.singleton PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction generation and finalization
-  Contested {..} ->
-    Set.singleton
-      PublishBridgeProof
-        { depositIdx
-        , operatorIdx
-        , bridgeProofTx = "bridge_proof_tx_placeholder" -- Placeholder for bridge proof transaction generation and finalization
-        }
-  BridgeProofPosted {..} ->
-    Set.singleton
-      PublishCounterProof
-        { depositIdx
-        , operatorIdx
-        , counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction generation (unsigned)
-        , proof = proof
-        }
-  CounterProofPosted {..} ->
-    let postedCounterProofNacks = Map.keysSet counterProofNacks
-        expectedCounterProofNacks = Map.keysSet $ counterproofs graphSummary
-        missingNacks = Set.difference expectedCounterProofNacks postedCounterProofNacks
-    in  Set.map
-          ( \counterProverIdx ->
-              PublishCounterProofNack
-                { depositIdx
-                , counterProverIdx
-                , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction generation (unsigned)
-                , labels = counterProofLabels Map.! counterProverIdx
-                }
-          )
-          missingNacks
+  Claimed {..}
+    | isNothing fulfillmentTxid' ->
+        Set.singleton PublishContest {signedContestTx = "contest_tx_placeholder"} -- Placeholder for contest transaction generation and finalization
+    | otherwise -> Set.empty
+  Contested {..}
+    | operatorIdx == povIdx opTable ->
+        Set.singleton
+          PublishBridgeProof
+            { depositIdx
+            , operatorIdx
+            , bridgeProofTx = "bridge_proof_tx_placeholder" -- Placeholder for bridge proof transaction generation and finalization
+            }
+    | otherwise -> Set.empty
+  BridgeProofPosted {..}
+    | operatorIdx /= povIdx opTable ->
+        Set.singleton
+          PublishCounterProof
+            { depositIdx
+            , operatorIdx
+            , counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction generation (unsigned)
+            , proof = proof
+            }
+    | otherwise -> Set.empty
+  CounterProofPosted {..}
+    | operatorIdx == povIdx opTable ->
+        let postedCounterProofNacks = Map.keysSet counterProofNacks
+            expectedCounterProofNacks = Map.keysSet $ counterproofs graphSummary
+            missingNacks = Set.difference expectedCounterProofNacks postedCounterProofNacks
+        in  Set.map
+              ( \counterProverIdx ->
+                  PublishCounterProofNack
+                    { depositIdx
+                    , counterProverIdx
+                    , counterProofNackTx = "counterproof_nack_tx_placeholder" -- Placeholder for counterproof NACK transaction generation (unsigned)
+                    , labels = counterProofLabels Map.! counterProverIdx
+                    }
+              )
+              missingNacks
+    | otherwise -> Set.empty
   -- the rest of the duties need not be retried
   _ -> Set.empty
