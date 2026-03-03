@@ -31,7 +31,6 @@ module Graph
   , lastProcessedBlock
   , processNagTick
   , processRetryTick
-  , processNagReceived
   ) where
 
 -- Prelude
@@ -210,7 +209,6 @@ data GraphState
       , drtBlockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
-      , aggNonces :: NonEmpty AggNonce -- needed to respond to nag for graph partial signature
       , signatures :: NonEmpty Signature -- final signatures per operator graph (packed/flattened representation)
       }
   | Assigned
@@ -222,7 +220,6 @@ data GraphState
       , drtBlockHeight :: BitcoinBlockHeight -- needed in case state transitions from `Assigned` back to `GraphSigned` (due to reassignment)
       , graphData :: GraphData
       , graphSummary :: GraphSummary
-      , aggNonces :: NonEmpty AggNonce -- needed in case state transitions from `Assigned` back to `GraphSigned` (due to reassignment)
       , signatures :: NonEmpty Signature
       , assignee :: OperatorIdx -- the operator assigned to fulfill the withdrawal
       , deadline :: BitcoinBlockHeight -- the block height by which the withdrawal must be fulfilled
@@ -407,12 +404,7 @@ data GraphDuty -- Tasks to be completed post state transition
 
 -- Duty to nag other operators for required information
 data NagDuty
-  = -- Nag for graph data required to construct an operator's graph
-    NagGraphData
-      { depositIdx :: DepositIdx -- the index of the deposit associated with this graph
-      , operatorIdx :: OperatorIdx -- the index of the operator associated with this graph
-      }
-  | -- Nag for nonces required for graph signing
+  = -- Nag for nonces required for graph signing
     NagGraphNonces
       { depositIdx :: DepositIdx -- the index of the deposit associated with this graph
       , operatorIdx :: OperatorIdx -- the index of the operator associated with this graph
@@ -583,8 +575,7 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
   in  if Map.size newPartials == expectedOperatorCount
         then
           ( GraphSigned
-              { aggNonces = aggNonces
-              , signatures = NonEmpty.fromList ["signature_placeholder"] -- Placeholder for signatures
+              { signatures = NonEmpty.fromList ["signature_placeholder"] -- Placeholder for signatures
               , ..
               }
           , GraphTransitionOutput
@@ -1085,27 +1076,18 @@ lastProcessedBlock state = case state of
 -- Declarations
 processNagTick :: GraphState -> OperatorTable -> Set.Set GraphDuty
 processRetryTick :: GraphState -> OperatorTable -> Set.Set GraphDuty
-processNagReceived :: GraphState -> NagDuty -> Set.Set GraphDuty
-processNagReceivedGraphData :: GraphState -> Set.Set GraphDuty
-processNagReceivedGraphNonces :: GraphState -> Set.Set GraphDuty
-processNagReceivedGraphPartials :: GraphState -> Set.Set GraphDuty
 -- Definitions
 processNagTick state opTable =
-  let expectedIds = case state of
-        Created {..} -> Set.singleton operatorIdx
-        _ -> Set.map (\(idx, _, _) -> idx) opTable.operators
-      presentIds = case state of
-        Created {} -> Set.empty
-        AdaptorsVerified {..} -> Map.keysSet nonces
-        NoncesCollected {..} -> Map.keysSet partials
-        _ -> Set.empty
+  let expectedIds = Set.map (\(idx, _, _) -> idx) opTable.operators
+      presentIds = Map.keysSet $ case state of
+        AdaptorsVerified {..} -> nonces
+        NoncesCollected {..} -> partials
+        _ -> Map.empty
       missingIds = Set.difference expectedIds presentIds
   in  Set.fromList
         $ mapMaybe
           ( \opIdx ->
               case state of
-                Created {..} ->
-                  Just Nag {duty = NagGraphData {depositIdx = depositIdx, operatorIdx = opIdx}}
                 AdaptorsVerified {..} ->
                   Just Nag {duty = NagGraphNonces {depositIdx = depositIdx, operatorIdx = opIdx}}
                 NoncesCollected {..} ->
@@ -1115,6 +1097,8 @@ processNagTick state opTable =
         $ Set.toList missingIds
 
 processRetryTick state opTable = case state of
+  Created {} ->
+    Set.singleton GenerateGraphData
   GraphGenerated {..}
     | povIdx opTable /= operatorIdx ->
         Set.singleton VerifyAdaptors {sighashes = NonEmpty.fromList ["sighash_placeholder"]} -- Placeholder for sighash generation from graph data
@@ -1163,63 +1147,4 @@ processRetryTick state opTable = case state of
               missingNacks
     | otherwise -> Set.empty
   -- the rest of the duties need not be retried
-  _ -> Set.empty
-
--- Precondition: `nag` has already been filtered upstream for this deposit SM
--- (using `depositIdx`) and for this PoV operator ( using `operatorIdx`).
--- This handler does not re-validate those IDs.
--- It only guards against publishing data that should not be shared.
-processNagReceived state nag = case nag of
-  NagGraphData {} -> processNagReceivedGraphData state
-  NagGraphNonces {} -> processNagReceivedGraphNonces state
-  NagGraphPartials {} -> processNagReceivedGraphPartials state
-
-processNagReceivedGraphData state = case state of
-  Created {} -> Set.singleton GenerateGraphData
-  GraphGenerated {} -> Set.singleton GenerateGraphData
-  AdaptorsVerified {} -> Set.singleton GenerateGraphData
-  _ -> Set.empty
-
-processNagReceivedGraphNonces state = case state of
-  AdaptorsVerified {..} ->
-    Set.singleton
-      PublishGraphNonces
-        { depositIdx
-        , operatorIdx
-        , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
-        , graphTweaks = NonEmpty.fromList [Nothing]
-        }
-  NoncesCollected {..} ->
-    Set.singleton
-      PublishGraphNonces
-        { depositIdx
-        , operatorIdx
-        , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
-        , graphTweaks = NonEmpty.fromList [Nothing]
-        }
-  _ -> Set.empty
-
-processNagReceivedGraphPartials state = case state of
-  NoncesCollected {..} ->
-    Set.singleton
-      PublishGraphPartials
-        { depositIdx
-        , operatorIdx
-        , aggNonces
-        , sighashes = NonEmpty.fromList ["sighash_placeholder"]
-        , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
-        , graphTweaks = NonEmpty.fromList [Nothing]
-        , claimTxid = claim graphSummary
-        }
-  GraphSigned {..} ->
-    Set.singleton
-      PublishGraphPartials
-        { depositIdx
-        , operatorIdx
-        , aggNonces
-        , sighashes = NonEmpty.fromList ["sighash_placeholder"]
-        , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
-        , graphTweaks = NonEmpty.fromList [Nothing]
-        , claimTxid = claim graphSummary
-        }
   _ -> Set.empty
