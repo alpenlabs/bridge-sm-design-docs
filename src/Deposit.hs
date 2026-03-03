@@ -684,6 +684,18 @@ processRetryTick state cfg = case state of
     | assignee == povIdx cfg ->
         Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
     | otherwise -> Set.empty
+  PayoutNoncesCollected {..}
+    | assignee == povIdx cfg && Map.size payoutPartialSignatures == opCardinality cfg - 1 ->
+        Set.singleton
+          PublishPayout
+            { depositOutPoint = depositOutPoint
+            , aggNonce = payoutAggNonce
+            , collectedPartials = payoutPartialSignatures
+            , payoutCoopTx = "payout_transaction_placeholder"
+            , orderedPubkeys = getOrderedPubkeys cfg
+            , povOperatorIdx = povIdx cfg
+            }
+    | otherwise -> Set.empty
   -- the rest of the duties need not be retried
   _ -> Set.empty
 
