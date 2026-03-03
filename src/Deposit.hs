@@ -16,6 +16,7 @@ module Deposit
   , hasCooperativePayoutFailed
   , processNagTick
   , processRetryTick
+  , processNagReceived
   ) where
 
 -- Prelude
@@ -632,6 +633,11 @@ lastProcessedBlock state = case state of
 -- Declarations
 processNagTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
 processRetryTick :: DepositState -> ExecConfig -> Set.Set DepositDuty
+processNagReceived :: DepositState -> ExecConfig -> NagDuty -> Set.Set DepositDuty
+processNagReceivedDepositNonce :: DepositState -> ExecConfig -> Set.Set DepositDuty
+processNagReceivedDepositPartial :: DepositState -> ExecConfig -> Set.Set DepositDuty
+processNagReceivedPayoutNonce :: DepositState -> ExecConfig -> Set.Set DepositDuty
+processNagReceivedPayoutPartial :: DepositState -> ExecConfig -> Set.Set DepositDuty
 -- Definitions
 processNagTick state cfg =
   let allOperatorIds = Set.map (\(idx, _, _, _) -> idx) $ operators cfg
@@ -679,15 +685,88 @@ processRetryTick state cfg = case state of
         Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
     | otherwise -> Set.empty
   PayoutNoncesCollected {..}
+    | assignee == povIdx cfg && Map.size payoutPartialSignatures == opCardinality cfg - 1 ->
+        Set.singleton
+          PublishPayout
+            { depositOutPoint = depositOutPoint
+            , aggNonce = payoutAggNonce
+            , collectedPartials = payoutPartialSignatures
+            , payoutCoopTx = "payout_transaction_placeholder"
+            , orderedPubkeys = getOrderedPubkeys cfg
+            , povOperatorIdx = povIdx cfg
+            }
+    | otherwise -> Set.empty
+  -- the rest of the duties need not be retried
+  _ -> Set.empty
+
+-- Precondition: `nag` has already been filtered upstream for this deposit SM
+-- (using `depositIdx`) and for this PoV operator ( using `operatorIdx`).
+-- This handler does not re-validate those IDs.
+-- It only guards against publishing data that should not be shared.
+processNagReceived state cfg nag = case nag of
+  NagDepositNonce {} -> processNagReceivedDepositNonce state cfg
+  NagDepositPartial {} -> processNagReceivedDepositPartial state cfg
+  NagPayoutNonce {} -> processNagReceivedPayoutNonce state cfg
+  NagPayoutPartial {} -> processNagReceivedPayoutPartial state cfg
+
+processNagReceivedDepositNonce state cfg = case state of
+  GraphGenerated {..} ->
+    Set.singleton
+      PublishDepositNonce
+        { depositIdx = depositIdx
+        , depositRequestOutPoint = depositRequestOutPoint
+        , claimTxids = claimTxids
+        , orderedPubkeys = getOrderedPubkeys cfg
+        }
+  DepositNoncesCollected {..} ->
+    Set.singleton
+      PublishDepositNonce
+        { depositIdx = depositIdx
+        , depositRequestOutPoint = depositRequestOutPoint
+        , claimTxids = claimTxids
+        , orderedPubkeys = getOrderedPubkeys cfg
+        }
+  _ -> Set.empty
+
+processNagReceivedDepositPartial state cfg = case state of
+  DepositNoncesCollected {..} ->
+    Set.singleton
+      PublishDepositPartial
+        { depositIdx = depositIdx
+        , depositRequestOutPoint = depositRequestOutPoint
+        , depositSighash = Data.List.NonEmpty.head $ sighashes depositTransaction
+        , claimTxids = claimTxids
+        , depositAggNonce = aggNonce
+        , orderedPubkeys = getOrderedPubkeys cfg
+        }
+  _ -> Set.empty
+
+processNagReceivedPayoutNonce state cfg = case state of
+  PayoutDescriptorReceived {..} ->
+    Set.singleton
+      PublishPayoutNonces
+        { depositIdx = depositIdx
+        , depositOutPoint = depositOutPoint
+        , orderedPubkeys = getOrderedPubkeys cfg
+        }
+  PayoutNoncesCollected {..} ->
+    Set.singleton
+      PublishPayoutNonces
+        { depositIdx = depositIdx
+        , depositOutPoint = depositOutPoint
+        , orderedPubkeys = getOrderedPubkeys cfg
+        }
+  _ -> Set.empty
+
+processNagReceivedPayoutPartial state cfg = case state of
+  PayoutNoncesCollected {..}
     | assignee /= povIdx cfg ->
         Set.singleton
           PublishPayoutPartial
             { depositIdx = depositIdx
             , depositOutPoint = depositOutPoint
-            , payoutSighash = "payout_sighash_placeholder" -- Placeholder for actual payout sighash
+            , payoutSighash = "payout_sighash_placeholder"
             , aggNonce = payoutAggNonce
             , orderedPubkeys = getOrderedPubkeys cfg
             }
-    | otherwise -> Set.empty
-  -- the rest of the duties need not be retried
   _ -> Set.empty
