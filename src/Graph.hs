@@ -1165,10 +1165,10 @@ processRetryTick state opTable = case state of
   -- the rest of the duties need not be retried
   _ -> Set.empty
 
-  -- Precondition: `nag` has already been filtered upstream for this deposit SM
-  -- (using `depositIdx`) and for this PoV operator ( using `operatorIdx`).
-  -- This handler does not re-validate those IDs.
-  -- It only guards against publishing data that should not be shared.
+-- Precondition: `nag` has already been filtered upstream for this deposit SM
+-- (using `depositIdx`) and for this PoV operator ( using `operatorIdx`).
+-- This handler does not re-validate those IDs.
+-- It only guards against publishing data that should not be shared.
 processNagReceived state nag = case nag of
   NagGraphData {} -> processNagReceivedGraphData state
   NagGraphNonces {} -> processNagReceivedGraphNonces state

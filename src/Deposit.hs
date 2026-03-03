@@ -684,24 +684,13 @@ processRetryTick state cfg = case state of
     | assignee == povIdx cfg ->
         Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
     | otherwise -> Set.empty
-  PayoutNoncesCollected {..}
-    | assignee /= povIdx cfg ->
-        Set.singleton
-          PublishPayoutPartial
-            { depositIdx = depositIdx
-            , depositOutPoint = depositOutPoint
-            , payoutSighash = "payout_sighash_placeholder" -- Placeholder for actual payout sighash
-            , aggNonce = payoutAggNonce
-            , orderedPubkeys = getOrderedPubkeys cfg
-            }
-    | otherwise -> Set.empty
   -- the rest of the duties need not be retried
   _ -> Set.empty
 
-  -- Precondition: `nag` has already been filtered upstream for this deposit SM
-  -- (using `depositIdx`) and for this PoV operator ( using `operatorIdx`).
-  -- This handler does not re-validate those IDs.
-  -- It only guards against publishing data that should not be shared.
+-- Precondition: `nag` has already been filtered upstream for this deposit SM
+-- (using `depositIdx`) and for this PoV operator ( using `operatorIdx`).
+-- This handler does not re-validate those IDs.
+-- It only guards against publishing data that should not be shared.
 processNagReceived state cfg nag = case nag of
   NagDepositNonce {} -> processNagReceivedDepositNonce state cfg
   NagDepositPartial {} -> processNagReceivedDepositPartial state cfg
