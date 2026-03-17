@@ -122,6 +122,9 @@ data StakeDuty
   | PublishUnstakingIntent
       { stakeData :: StakeData -- data required to construct the unstaking graph
       }
+  | PublishStake
+      { stakeTx :: Transaction -- the unsigned stake transaction ready to be published
+      }
   | PublishUnstakingTx
       { stakeData :: StakeData -- data required to construct the unstaking graph
       }
