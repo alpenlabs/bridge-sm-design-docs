@@ -325,7 +325,7 @@ processNagTick :: StakeState -> OperatorTable -> Set.Set StakeDuty
 processNagTick state opTable =
   let expectedIds = Set.map (\(idx, _, _) -> idx) $ operators opTable
       presentIds = case state of
-        Created {..} -> Set.singleton operatorIdx
+        Created {} -> expectedIds -- full set so that the diff is null and we calculate the nag duty based on stake owner
         StakeGraphGenerated {..} -> Map.keysSet nonces
         UnstakingNoncesCollected {..} -> Map.keysSet partials
         _ -> Set.empty
@@ -333,7 +333,7 @@ processNagTick state opTable =
   in  Set.fromList
         $ mapMaybe
           ( \opIdx -> case state of
-              Created {} -> Just Nag {duty = NagStakeData {operatorIdx = opIdx}}
+              Created {operatorIdx} -> Just Nag {duty = NagStakeData {operatorIdx}}
               StakeGraphGenerated {} -> Just Nag {duty = NagUnstakingNonces {operatorIdx = opIdx}}
               UnstakingNoncesCollected {} -> Just Nag {duty = NagUnstakingPartials {operatorIdx = opIdx}}
               _ -> Nothing
