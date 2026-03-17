@@ -17,6 +17,7 @@ module Stake
   , getPreimage
   , lastProcessedBlock
   , processNagTick
+  , processRetryTick
   ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
@@ -324,6 +325,7 @@ lastProcessedBlock state = case state of
 -- Retry Handlers
 -- Declarations
 processNagTick :: StakeState -> OperatorTable -> Set.Set StakeDuty
+processRetryTick :: StakeState -> OperatorTable -> Set.Set StakeDuty
 -- Definitions
 processNagTick state opTable =
   let expectedIds = Set.map (\(idx, _, _) -> idx) $ operators opTable
@@ -342,3 +344,7 @@ processNagTick state opTable =
               _ -> Nothing
           )
         $ Set.toList missingIds
+
+processRetryTick state _ = case state of
+  UnstakingSigned {} -> Set.singleton PublishStake {stakeTx = "unsigned_stake_tx_placeholder"} -- In a real implementation, this would be the actual unsigned stake transaction ready to be published
+  _ -> Set.empty
