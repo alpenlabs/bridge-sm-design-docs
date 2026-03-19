@@ -12,7 +12,7 @@ module Stake
   , processPreimageRevealed
   , processUnstaking
   , notifyNewBlock
-  , isAvailable
+  , hasStaked
   , isUnstaked
   , getPreimage
   , lastProcessedBlock
@@ -283,12 +283,12 @@ notifyNewBlock state@Unstaked {} _ = (state, emptyOutput) -- does not need any m
 notifyNewBlock state btcBlockHeight = (state {blockHeight = btcBlockHeight}, emptyOutput)
 
 -- Introspection Functions
-isAvailable :: StakeState -> Bool
-isAvailable Created {} = False
-isAvailable StakeGraphGenerated {} = False
-isAvailable UnstakingNoncesCollected {} = False
-isAvailable UnstakingSigned {} = False
-isAvailable _ = True
+hasStaked :: StakeState -> Bool
+hasStaked Created {} = False
+hasStaked StakeGraphGenerated {} = False
+hasStaked UnstakingNoncesCollected {} = False
+hasStaked UnstakingSigned {} = False
+hasStaked _ = True
 
 isUnstaked :: StakeState -> Bool
 isUnstaked Unstaked {} = True
