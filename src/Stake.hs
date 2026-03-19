@@ -121,13 +121,15 @@ data StakeDuty
       , aggNonces :: NonEmpty AggNonce -- aggregated nonces for the unstaking transactions
       }
   | PublishUnstakingIntent
-      { stakeData :: StakeData -- data required to construct the unstaking graph
+      { -- the unsigned unstaking intent transaction ready to be signed and published
+        -- this is unsigned because it requires a preimage for finalization which needs to be queried from an external service.
+        unsignedUnstakingIntentTx :: Transaction
       }
   | PublishStake
       { stakeTx :: Transaction -- the unsigned stake transaction ready to be signed and published
       }
   | PublishUnstakingTx
-      { stakeData :: StakeData -- data required to construct the unstaking graph
+      { unstakingTx :: Transaction -- the unstaking transaction ready to be published
       }
   | Nag
       { duty :: NagDuty -- specific nag duty
@@ -292,7 +294,8 @@ notifyNewBlock state newHeight
       error "Rejected: Rejecting already processed block height"
 notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + unstakingTimelock =
-      let output = StakeTransitionOutput {duty = Just PublishUnstakingTx {stakeData = stakeData}}
+      let unstakingTx = "unsigned_unstaking_tx_placeholder" -- In a real implementation, this would be constructed from the stake data and finalized using pre-shared signatures.
+          output = StakeTransitionOutput {duty = Just PublishUnstakingTx {unstakingTx}}
       in  (state {blockHeight = btcBlockHeight}, output)
   | otherwise = (PreimageRevealed {blockHeight = btcBlockHeight, ..}, emptyOutput)
 notifyNewBlock Unstaked {} _ = error "Rejected: terminal state"
