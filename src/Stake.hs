@@ -124,7 +124,7 @@ data StakeDuty
       { stakeData :: StakeData -- data required to construct the unstaking graph
       }
   | PublishStake
-      { stakeTx :: Transaction -- the unsigned stake transaction ready to be published
+      { stakeTx :: Transaction -- the unsigned stake transaction ready to be signed and published
       }
   | PublishUnstakingTx
       { stakeData :: StakeData -- data required to construct the unstaking graph
@@ -346,5 +346,5 @@ processNagTick state opTable =
         $ Set.toList missingIds
 
 processRetryTick state _ = case state of
-  UnstakingSigned {} -> Set.singleton PublishStake {stakeTx = "unsigned_stake_tx_placeholder"} -- In a real implementation, this would be the actual unsigned stake transaction ready to be published
+  UnstakingSigned {} -> Set.singleton PublishStake {stakeTx = "unsigned_stake_tx_placeholder"} -- In a real implementation, this would be the actual unsigned stake transaction ready to be signed and published
   _ -> Set.empty
