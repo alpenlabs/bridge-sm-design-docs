@@ -45,6 +45,9 @@ type P2PKey = String -- Placeholder for P2P public key
 txid :: Transaction -> Txid
 txid _ = "txid_placeholder" -- Placeholder implementation
 
+expectedStakeTxidFromStakeData :: StakeData -> Txid
+expectedStakeTxidFromStakeData _ = "expected_stake_txid_placeholder" -- Placeholder implementation
+
 inpoints :: Transaction -> NonEmpty OutPoint
 inpoints _ = ("txid_placeholder", 0) :| [] -- Placeholder implementation
 
@@ -189,19 +192,20 @@ processStakeConfirmed :: StakeState -> Transaction -> (StakeState, StakeTransiti
 processPreimageRevealed :: StakeState -> Transaction -> BitcoinBlockHeight -> (StakeState, StakeTransitionOutput) -- Confirmed -> PreimageRevealed
 processUnstaking :: StakeState -> Transaction -> (StakeState, StakeTransitionOutput) -- PreimageRevealed -> Unstaked
 notifyNewBlock :: StakeState -> BitcoinBlockHeight -> (StakeState, StakeTransitionOutput) -- PreimageRevealed -> PreimageRevealed (with duty to publish unstaking tx)
+
 -- Definitions
 processStakeData Created {..} stakeData =
   let newState = StakeGraphGenerated {stakeData = stakeData, nonces = Map.empty, ..}
       output = StakeTransitionOutput {duty = Just (PublishUnstakingNonces {stakeData = stakeData})}
   in  (newState, output)
-processStakeData StakeGraphGenerated {} _ = error "Stake data has already been processed"
-processStakeData state _ = error $ "Received stale stake data event in state: " ++ show state
+processStakeData StakeGraphGenerated {} _ = error "Duplicate: Stake data has already been processed"
+processStakeData state _ = error $ "Rejected: Invalid state for receiving state data: " ++ show state
 
 processUnstakingNonces StakeGraphGenerated {..} opTable operatorIdx' pubNonces =
   let updatedNonces =
         if isNothing $ Map.lookup operatorIdx' nonces
           then Map.insert operatorIdx' pubNonces nonces
-          else error $ "Duplicate unstaking nonces received from operator: " ++ show operatorIdx'
+          else error $ "Duplicate: Unstaking nonces have already been received from operator: " ++ show operatorIdx'
   in  if Map.size updatedNonces == opCardinality opTable
         then
           let aggNonces = "agg_nonce_placeholder" :| [] -- In a real implementation, this would be computed from the collected nonces
@@ -212,39 +216,46 @@ processUnstakingNonces StakeGraphGenerated {..} opTable operatorIdx' pubNonces =
           let newState = StakeGraphGenerated {nonces = updatedNonces, ..}
               output = emptyOutput
           in  (newState, output)
-processUnstakingNonces UnstakingNoncesCollected {} _ _ _ = error "Unstaking nonces have already been collected"
-processUnstakingNonces state _ _ _ = error $ "Invalid state for collecting unstaking nonces: " ++ show state
+processUnstakingNonces UnstakingNoncesCollected {} _ _ _ = error "Duplicate: Unstaking nonces have already been collected"
+processUnstakingNonces state _ _ _ = error $ "Rejected: Invalid state for collecting unstaking nonces: " ++ show state
 
 processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' partialSig =
   let operatorNonces = case Map.lookup operatorIdx' nonces of
         Just ns -> ns
-        Nothing -> error "Operator nonces not found"
+        Nothing -> error "Rejected: Operator not found"
       updatedPartials =
         if isNothing $ Map.lookup operatorIdx' partials
           then
             if verifyAllPartials opTable operatorIdx' operatorNonces aggNonces partialSig
               then Map.insert operatorIdx' partialSig partials
-              else error $ "Partial Signature Verification Failed for Operator: " ++ show operatorIdx'
-          else error $ "Duplicate unstaking partial signatures received from operator: " ++ show operatorIdx'
+              else error $ "Rejected: Partial signature verification failed for operator: " ++ show operatorIdx'
+          else error $ "Duplicate: Unstaking partial signatures received from operator: " ++ show operatorIdx'
   in  if Map.size updatedPartials == opCardinality opTable
         then
           let signatures = "signature_placeholder" :| [] -- In a real implementation, this would be computed from the collected partial signatures and agg nonce
-              expectedStakeTxid = "expected_stake_txid_placeholder" -- In a real implementation, this would be derived from the stake data
+              expectedStakeTxid = expectedStakeTxidFromStakeData stakeData
               newState = UnstakingSigned {expectedStakeTxid = expectedStakeTxid, signatures = signatures, ..}
           in  (newState, emptyOutput)
         else
           let newState = UnstakingNoncesCollected {partials = updatedPartials, ..}
           in  (newState, emptyOutput)
-processUnstakingPartials UnstakingSigned {} _ _ _ = error "Unstaking partials have already been collected"
-processUnstakingPartials state _ _ _ = error $ "Invalid state for collecting unstaking partials: " ++ show state
+processUnstakingPartials UnstakingSigned {} _ _ _ = error "Duplicate: Unstaking partials have already been collected"
+processUnstakingPartials state _ _ _ = error $ "Rejected: Invalid state for collecting unstaking partials: " ++ show state
 
 processStakeConfirmed UnstakingSigned {..} tx
   | txid tx == expectedStakeTxid =
       let newState = Confirmed {stakeTxid = expectedStakeTxid, ..}
           output = StakeTransitionOutput {duty = Nothing}
       in  (newState, output)
-  | otherwise = error "Unexpected transaction for stake confirmation"
-processStakeConfirmed state _ = (state, emptyOutput)
+  | otherwise = error "Rejected: Unexpected transaction for stake confirmation"
+processStakeConfirmed UnstakingNoncesCollected {..} tx
+  | txid tx == expectedStakeTxidFromStakeData stakeData =
+      let newState = Confirmed {stakeTxid = expectedStakeTxidFromStakeData stakeData, ..}
+          output = StakeTransitionOutput {duty = Nothing}
+      in  (newState, output)
+  | otherwise = error "Rejected: Unexpected transaction for stake confirmation"
+processStakeConfirmed Confirmed {} _ = error "Duplicate: Stake has already been confirmed"
+processStakeConfirmed state _ = error $ "Rejected: Invalid state for stake confirmation: " ++ show state
 
 processPreimageRevealed Confirmed {..} tx btcBlockHeight
   | (stakeTxid, 0) == NonEmpty.head (inpoints tx) =
@@ -258,28 +269,29 @@ processPreimageRevealed Confirmed {..} tx btcBlockHeight
                   }
               output = StakeTransitionOutput {duty = Nothing}
           in  (newState, output)
-  | otherwise = error "Transaction does not match expected unstaking intent transaction"
-processPreimageRevealed state@PreimageRevealed {} _ _ = (state, emptyOutput)
-processPreimageRevealed state _ _ = error $ "Invalid state for preimage revelation: " ++ show state
+  | otherwise = error "Rejected: Transaction does not match expected unstaking intent transaction"
+processPreimageRevealed PreimageRevealed {} _ _ = error "Duplicate: Preimage has already been revealed"
+processPreimageRevealed Unstaked {} _ _ = error "Rejected: Terminal state"
+processPreimageRevealed state _ _ = error $ "Invalid Event: Invalid state for preimage revelation: " ++ show state
 
 processUnstaking PreimageRevealed {..} tx
   | txid tx == expectedUnstakingTxid =
       let newState = Unstaked {unstakingTxid = expectedUnstakingTxid, ..}
           output = StakeTransitionOutput {duty = Nothing}
       in  (newState, output)
-  | otherwise = error "Unexpected transaction for unstaking"
-processUnstaking state@Unstaked {} _ = (state, StakeTransitionOutput {duty = Nothing}) -- re-emit the signal if already unstaked to maintain idempotency
-processUnstaking state _ = (state, emptyOutput)
+  | otherwise = error "Rejected: Unexpected transaction for unstaking"
+processUnstaking Unstaked {} _ = error "Rejected: Unstaking has already been processed"
+processUnstaking state _ = error $ "Invalid Event: Invalid state for unstaking: " ++ show state
 
 notifyNewBlock state newHeight
   | isJust (lastProcessedBlock state) && fromJust (lastProcessedBlock state) >= newHeight =
-      error "Rejecting already processed block height"
+      error "Rejected: Rejecting already processed block height"
 notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + unstakingTimelock =
       let output = StakeTransitionOutput {duty = Just PublishUnstakingTx {stakeData = stakeData}}
       in  (state {blockHeight = btcBlockHeight}, output)
   | otherwise = (PreimageRevealed {blockHeight = btcBlockHeight, ..}, emptyOutput)
-notifyNewBlock state@Unstaked {} _ = (state, emptyOutput) -- does not need any more updates
+notifyNewBlock Unstaked {} _ = error "Rejected: terminal state"
 notifyNewBlock state btcBlockHeight = (state {blockHeight = btcBlockHeight}, emptyOutput)
 
 -- Introspection Functions
