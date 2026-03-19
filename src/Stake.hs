@@ -50,8 +50,8 @@ inpoints _ = ("txid_placeholder", 0) :| [] -- Placeholder implementation
 
 -- Parameters
 -- Numbers are chosen arbitrarily
-maxGameDuration :: U32
-maxGameDuration = 3024 -- maximum duration (in Bitcoin blocks) for the withdrawal game
+unstakingTimelock :: U32
+unstakingTimelock = 3024 -- maximum duration (in Bitcoin blocks) for the withdrawal game
 
 -- State
 -- Represents the state of the operator stakes
@@ -275,7 +275,7 @@ notifyNewBlock state newHeight
   | isJust (lastProcessedBlock state) && fromJust (lastProcessedBlock state) >= newHeight =
       error "Rejecting already processed block height"
 notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
-  | btcBlockHeight > unstakingIntentBlockHeight + maxGameDuration =
+  | btcBlockHeight > unstakingIntentBlockHeight + unstakingTimelock =
       let output = StakeTransitionOutput {duty = Just PublishUnstakingTx {stakeData = stakeData}}
       in  (state {blockHeight = btcBlockHeight}, output)
   | otherwise = (PreimageRevealed {blockHeight = btcBlockHeight, ..}, emptyOutput)
