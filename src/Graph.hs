@@ -165,7 +165,6 @@ data GraphState
       , operatorIdx :: OperatorIdx -- the index of the operator this graph belongs to
       , depositOutPoint :: OutPoint -- the outpoint deposit transaction associated with this contract , outputIndex :: U32 -- the output index within the deposit transaction that is to be used for this pegout (to allow batched deposits)
       , blockHeight :: BitcoinBlockHeight -- the height of the most recent block that this state is aware of
-      , drtBlockHeight :: BitcoinBlockHeight -- the block height at which the DRT was confirmed
       }
   | GraphGenerated
       { -- Represents a state where the pegout graph for this deposit and operator has been generated
@@ -173,7 +172,6 @@ data GraphState
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
-      , drtBlockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary -- the txids of the generated pegout graph transactions (required for tx filtering)
       }
@@ -183,7 +181,6 @@ data GraphState
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
-      , drtBlockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , nonces :: Map OperatorIdx (NonEmpty Nonce) -- nonces from each operator per operator graph (packed/flattened representation)
@@ -194,7 +191,6 @@ data GraphState
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
-      , drtBlockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , nonces :: Map OperatorIdx (NonEmpty Nonce)
@@ -207,7 +203,6 @@ data GraphState
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
-      , drtBlockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , aggNonces :: NonEmpty AggNonce -- needed to respond to nag for graph partial signature
@@ -219,7 +214,6 @@ data GraphState
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
-      , drtBlockHeight :: BitcoinBlockHeight -- needed in case state transitions from `Assigned` back to `GraphSigned` (due to reassignment)
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , aggNonces :: NonEmpty AggNonce -- needed in case state transitions from `Assigned` back to `GraphSigned` (due to reassignment)
