@@ -1051,6 +1051,16 @@ notifyNewBlock curState _opTable newBlockHeight = case curState of
             , duty = Just PublishContestedPayout {signedContestedPayoutTx = "contested_payout_tx_placeholder"} -- Placeholder for contested payout transaction
             }
         )
+  Assigned {..}
+    -- move back to GraphSigned state if fulfillment deadline has elasped.
+    -- Can use (>=) if txs in a block are guaranteed to be processed before notifyNewBlock.
+    | newBlockHeight > deadline ->
+        ( GraphSigned
+            { maybeAggNonces = Nothing
+            , ..
+            }
+        , emptyOutput
+        )
   -- The next three states should not need any further updates
   Slashed {} -> error "No more updates required"
   Withdrawn {} -> error "No more updates required"
