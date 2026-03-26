@@ -442,20 +442,27 @@ processAssignment deposit@Assigned {} cfg assignee' deadline' recipientDesc' =
   in  (newState, duty)
 processAssignment _ _ _ _ _ = error "Invalid state transition"
 
-processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight =
-  let newState =
-        Fulfilled
-          { fulfillmentTxid = txid fulfillmentTx
-          , fulfillmentBlockHeight = fulfillmentBlockHeight
-          , cooperativePayoutDeadline = fulfillmentBlockHeight + cooperativePayoutWindow
-          , ..
-          }
-      povOperatorIdx = povIdx cfg
-      duty =
-        if assignee == povOperatorIdx
-          then Just RequestPayoutNonce {..}
-          else Nothing
-  in  (newState, duty)
+processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight
+  | fulfillmentBlockHeight <= deadline =
+      let newState =
+            Fulfilled
+              { fulfillmentTxid = txid fulfillmentTx
+              , fulfillmentBlockHeight = fulfillmentBlockHeight
+              , cooperativePayoutDeadline = fulfillmentBlockHeight + cooperativePayoutWindow
+              , ..
+              }
+          povOperatorIdx = povIdx cfg
+          duty =
+            if assignee == povOperatorIdx
+              then Just RequestPayoutNonce {..}
+              else Nothing
+      in  (newState, duty)
+  | otherwise =
+      error $
+        "Fulfillment block height "
+          ++ show fulfillmentBlockHeight
+          ++ " exceeds deadline "
+          ++ show deadline
 processFulfillment _ _ _ _ = error "Invalid state transition"
 
 processPayoutDescriptor Fulfilled {..} cfg payoutOutputDesc operatorIdx =
