@@ -620,8 +620,14 @@ processAssignment GraphSigned {..} assignee deadline recipientDesc
           ++ show operatorIdx
 -- reassignment
 processAssignment state@Assigned {..} newAssignee newDeadline newRecipientDesc
-  -- same assignee (aka same graph)
-  | assignee == newAssignee && (deadline /= newDeadline || recipientDesc /= newRecipientDesc) =
+  -- recipient descriptor cannot be changed once assigned
+  | recipientDesc /= newRecipientDesc =
+      error "Recipient descriptor cannot be changed for an existing assignment"
+  -- assignment deadline must not be smaller than the existing deadline
+  | newDeadline < deadline =
+      error "Assignment deadline must not be smaller than the existing deadline"
+  -- same assignee: update assignment in place
+  | assignee == newAssignee =
       ( Assigned
           { assignee = newAssignee
           , deadline = newDeadline
@@ -630,14 +636,13 @@ processAssignment state@Assigned {..} newAssignee newDeadline newRecipientDesc
           }
       , emptyOutput
       )
-  -- different assignee (aka different graph, so revert)
-  | assignee /= newAssignee =
+  -- different assignee: revert to GraphSigned
+  | otherwise =
       ( GraphSigned
           { ..
           }
       , emptyOutput
       )
-  | otherwise = (state, emptyOutput)
 processAssignment state _ _ _ = error $ "Invalid state for assignment: " ++ show state
 
 processFulfillment Assigned {..} fulfillmentTxid fulfillmentBlockHeight =
