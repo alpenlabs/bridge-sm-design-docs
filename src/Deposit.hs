@@ -578,6 +578,15 @@ notifyNewBlock height PayoutNoncesCollected {..}
       error "Rejecting already processed block"
 notifyNewBlock _ Aborted {} = error "No more updates required" -- does not need any more updates
 notifyNewBlock _ Spent {} = error "No more updates required" -- does not need any more updates
+notifyNewBlock height Assigned {..}
+  -- move back to Deposited state from Assigned if fulfillment deadline has elapsed.
+  -- Can use (>=) if txs in a block are guaranteed to be processed before notifyNewBlock.
+  | height > deadline =
+      Deposited {blockHeight = height, ..}
+  | height <= blockHeight =
+      error "Rejecting already processed block"
+  | otherwise =
+      Assigned {blockHeight = height, ..}
 notifyNewBlock newHeight state = case lastProcessedBlock state of
   Just h | newHeight > h -> state {blockHeight = newHeight}
   _ -> error "Rejecting already processed block"
