@@ -205,7 +205,7 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
-      , aggNonces :: NonEmpty AggNonce -- needed to respond to nag for graph partial signature
+      , maybeAggNonces :: Maybe (NonEmpty AggNonce) -- needed to respond to nag for graph partial signature; Nothing if reverted from Assigned
       , signatures :: NonEmpty Signature -- final signatures per operator graph (packed/flattened representation)
       }
   | Assigned
@@ -216,7 +216,6 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
-      , aggNonces :: NonEmpty AggNonce -- needed in case state transitions from `Assigned` back to `GraphSigned` (due to reassignment)
       , signatures :: NonEmpty Signature
       , assignee :: OperatorIdx -- the operator assigned to fulfill the withdrawal
       , deadline :: BitcoinBlockHeight -- the block height by which the withdrawal must be fulfilled
@@ -577,7 +576,7 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
   in  if Map.size newPartials == expectedOperatorCount
         then
           ( GraphSigned
-              { aggNonces = aggNonces
+              { maybeAggNonces = Just aggNonces
               , signatures = NonEmpty.fromList ["signature_placeholder"] -- Placeholder for signatures
               , ..
               }
@@ -633,7 +632,8 @@ processAssignment state@Assigned {..} newAssignee newDeadline newRecipientDesc
   -- different assignee: revert to GraphSigned
   | otherwise =
       ( GraphSigned
-          { ..
+          { maybeAggNonces = Nothing
+          , ..
           }
       , emptyOutput
       )
@@ -1218,14 +1218,17 @@ processNagReceivedGraphPartials state = case state of
         , claimTxid = claim graphSummary
         }
   GraphSigned {..} ->
-    Set.singleton
-      PublishGraphPartials
-        { depositIdx
-        , operatorIdx
-        , aggNonces
-        , sighashes = NonEmpty.fromList ["sighash_placeholder"]
-        , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
-        , graphTweaks = NonEmpty.fromList [Nothing]
-        , claimTxid = claim graphSummary
-        }
+    case maybeAggNonces of
+      Just nonces ->
+        Set.singleton
+          PublishGraphPartials
+            { depositIdx
+            , operatorIdx
+            , aggNonces = nonces
+            , sighashes = NonEmpty.fromList ["sighash_placeholder"]
+            , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
+            , graphTweaks = NonEmpty.fromList [Nothing]
+            , claimTxid = claim graphSummary
+            }
+      Nothing -> Set.empty -- reverted from Assigned, don't respond to nag
   _ -> Set.empty
