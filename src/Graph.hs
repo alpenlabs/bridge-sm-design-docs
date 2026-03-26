@@ -602,15 +602,22 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
 processPartials GraphSigned {} _ _ = error "Graph already signed"
 processPartials state _ _ = error $ "Invalid state for partials" ++ show state
 
-processAssignment GraphSigned {..} assignee deadline recipientDesc =
-  ( Assigned
-      { assignee
-      , deadline
-      , recipientDesc
-      , ..
-      }
-  , emptyOutput
-  )
+processAssignment GraphSigned {..} assignee deadline recipientDesc
+  | assignee == operatorIdx =
+      ( Assigned
+          { assignee
+          , deadline
+          , recipientDesc
+          , ..
+          }
+      , emptyOutput
+      )
+  | otherwise =
+      error $
+        "Withdrawal assigned to operator "
+          ++ show assignee
+          ++ " but this graph belongs to operator "
+          ++ show operatorIdx
 -- reassignment
 processAssignment state@Assigned {..} newAssignee newDeadline newRecipientDesc
   -- same assignee (aka same graph)
