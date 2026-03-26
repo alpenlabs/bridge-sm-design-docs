@@ -639,13 +639,20 @@ processAssignment state@Assigned {..} newAssignee newDeadline newRecipientDesc
       )
 processAssignment state _ _ _ = error $ "Invalid state for assignment: " ++ show state
 
-processFulfillment Assigned {..} fulfillmentTxid fulfillmentBlockHeight =
-  ( Fulfilled
-      { coopPayoutFailed = False
-      , ..
-      }
-  , emptyOutput
-  )
+processFulfillment Assigned {..} fulfillmentTxid fulfillmentBlockHeight
+  | fulfillmentBlockHeight <= deadline =
+      ( Fulfilled
+          { coopPayoutFailed = False
+          , ..
+          }
+      , emptyOutput
+      )
+  | otherwise =
+      error $
+        "Fulfillment block height "
+          ++ show fulfillmentBlockHeight
+          ++ " exceeds deadline "
+          ++ show deadline
 processFulfillment Fulfilled {} _ _ = error "Graph already fulfilled"
 processFulfillment state _ _ = error $ "Invalid state for fulfillment" ++ show state
 
