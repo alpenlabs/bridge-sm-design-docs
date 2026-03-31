@@ -944,8 +944,8 @@ processPayout Claimed {..} tx
   | txid tx == uncontestedPayout graphSummary = mkWithdrawn depositIdx operatorIdx tx
   | otherwise = error "Invalid uncontested payout transaction"
 processPayout BridgeProofPosted {..} tx
-  | txid tx == uncontestedPayout graphSummary = mkWithdrawn depositIdx operatorIdx tx
-  | otherwise = error "Invalid uncontested payout transaction"
+  | txid tx == contestedPayout graphSummary = mkWithdrawn depositIdx operatorIdx tx
+  | otherwise = error "Invalid contested payout transaction"
 processPayout AllNackd {..} tx
   | txid tx == expectedPayoutTxid = mkWithdrawn depositIdx operatorIdx tx
   | otherwise = error "Invalid contested payout transaction"
