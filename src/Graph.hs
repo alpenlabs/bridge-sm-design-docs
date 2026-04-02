@@ -1015,7 +1015,10 @@ notifyNewBlock curState@CounterProofPosted {..} opTable newBlockHeight
       )
   | otherwise =
       let povCounterProof = Map.lookup (povIdx opTable) counterProofsAndConfs
-          isAckViable = isJust povCounterProof && snd (fromJust povCounterProof) + nackTimeout > newBlockHeight
+          isAckViable = case povCounterProof of
+            Just (_, counterproofConfHeight) ->
+              newBlockHeight > counterproofConfHeight + nackTimeout
+            Nothing -> False
       in  if isAckViable
             then
               ( curState {blockHeight = newBlockHeight}
