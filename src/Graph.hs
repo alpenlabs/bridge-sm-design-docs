@@ -279,6 +279,7 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
       , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
+      , signedSlashTx :: Transaction -- signed slash transaction to publish if payout window elapses
       , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
       }
   | CounterProofPosted
@@ -312,6 +313,7 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
       , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
+      , signedSlashTx :: Transaction -- signed slash transaction to publish if payout window elapses
       , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
       }
   | Withdrawn
@@ -767,6 +769,7 @@ processBridgeProofTimeout Contested {..} tx
   | txid tx == bridgeProofTimeout graphSummary =
       ( BridgeProofTimedout
           { expectedSlashTxid = slash graphSummary
+          , signedSlashTx = "slash_tx_placeholder" -- Placeholder for signed slash transaction
           , claimTxid = claim graphSummary
           , ..
           }
@@ -871,6 +874,7 @@ processCounterProofAckd CounterProofPosted {..} tx
   | txid tx `elem` Map.elems (counterproofAcks graphSummary) =
       ( Acked
           { expectedSlashTxid = slash graphSummary
+          , signedSlashTx = "slash_tx_placeholder" -- Placeholder for signed slash transaction
           , claimTxid = claim graphSummary
           , ..
           }
@@ -979,10 +983,14 @@ processPayoutConnectorSpent state tx
 
 mkSlashOutput :: GraphState -> GraphTransitionOutput
 mkSlashOutput state =
-  GraphTransitionOutput
-    { signal = Just (OperatorSlashed state.operatorIdx)
-    , duty = Just PublishSlash {signedSlashTx = "slash_tx_placeholder"} -- Placeholder for slash transaction
-    }
+  let slashTx = case state of
+        BridgeProofTimedout {..} -> signedSlashTx
+        Acked {..} -> signedSlashTx
+        _ -> "slash_tx_placeholder" -- Placeholder for signed slash transaction extraction from graph context
+  in  GraphTransitionOutput
+        { signal = Just (OperatorSlashed state.operatorIdx)
+        , duty = Just PublishSlash {signedSlashTx = slashTx}
+        }
 
 -- check if the block is new
 notifyNewBlock state _opTable newBlockHeight
