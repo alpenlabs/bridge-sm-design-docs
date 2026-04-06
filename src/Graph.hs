@@ -918,6 +918,15 @@ mkSlashed depositIdx operatorIdx slashTxid =
       }
   )
 
+processSlash Contested {..} tx
+  | txid tx == slash graphSummary = mkSlashed depositIdx operatorIdx (txid tx)
+  | otherwise = error "Invalid slash transaction"
+processSlash BridgeProofPosted {..} tx
+  | txid tx == slash graphSummary = mkSlashed depositIdx operatorIdx (txid tx)
+  | otherwise = error "Invalid slash transaction"
+processSlash CounterProofPosted {..} tx
+  | txid tx == slash graphSummary = mkSlashed depositIdx operatorIdx (txid tx)
+  | otherwise = error "Invalid slash transaction"
 processSlash BridgeProofTimedout {..} tx
   | txid tx == expectedSlashTxid = mkSlashed depositIdx operatorIdx (txid tx)
   | otherwise = error "Invalid slash transaction"
