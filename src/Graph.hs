@@ -1209,7 +1209,7 @@ processRetryTick state opTable = case state of
             , proof = proof
             }
     | otherwise -> Set.empty
-  CounterProofPosted {..}
+  CounterProofPosted {refutedProof, ..}
     | operatorIdx == povIdx opTable ->
         let postedCounterProofNacks = Map.keysSet counterProofNacks
             expectedCounterProofNacks = Map.keysSet $ counterproofs graphSummary
@@ -1224,6 +1224,13 @@ processRetryTick state opTable = case state of
                     }
               )
               missingNacks
+    | operatorIdx == povIdx opTable && isNothing refutedProof ->
+        Set.singleton PublishBridgeProof {depositIdx, operatorIdx, bridgeProofTx = "bridge_proof_tx_placeholder"} -- Placeholder for bridge proof transaction generation and finalization
+    | operatorIdx /= povIdx opTable -- not my graph
+        && isJust refutedProof -- proof exists
+        && not (verify $ fromJust refutedProof) -- existing proof is invalid
+        && povIdx opTable `elem` Map.keys counterProofsAndConfs -> -- haven't posted the counterproof yet
+        Set.singleton PublishCounterProof {counterProofTx = "counterproof_tx_placeholder", proof = fromJust refutedProof, ..}
     | otherwise -> Set.empty
   -- the rest of the duties need not be retried
   _ -> Set.empty
