@@ -72,6 +72,9 @@ txid _ = "txid_placeholder" -- Placeholder implementation
 inpoints :: Transaction -> NonEmpty OutPoint
 inpoints _ = ("txid_placeholder", 0) :| [] -- Placeholder implementation for input outpoints (head :| tail)
 
+verify :: Proof -> Bool
+verify _ = True -- Placeholder implementation for proof verification (accept all proofs for now)
+
 -- Parameters
 -- NOTE: numbers are arbitrary and expressed in terms of bitcoin blocks
 -- payoutTimeout >> all other timeouts
@@ -750,7 +753,7 @@ processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
           , GraphTransitionOutput
               { signal = Nothing
               , duty =
-                  if operatorIdx /= povIdx opTable
+                  if operatorIdx /= povIdx opTable && not (verify proof)
                     then
                       Just
                         PublishCounterProof
@@ -764,12 +767,18 @@ processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
           )
   | otherwise = error "Invalid bridge proof transaction"
 processBridgeProof BridgeProofPosted {} _ _ _ = error "Bridge proof already posted"
-processBridgeProof CounterProofPosted {refutedProof, ..} _ _ _
+processBridgeProof CounterProofPosted {refutedProof, ..} opTable _ _
   | isNothing refutedProof =
       let proof = "proof_placeholder" -- Placeholder for proof (needs to be extracted from tx)
           counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction
       in  ( CounterProofPosted {refutedProof = Just proof, ..}
-          , GraphTransitionOutput {signal = Nothing, duty = Just PublishCounterProof {counterProofTx, ..}}
+          , GraphTransitionOutput
+              { signal = Nothing
+              , duty =
+                  if povIdx opTable /= operatorIdx && not (verify proof)
+                    then Just PublishCounterProof {counterProofTx, ..}
+                    else Nothing
+              }
           )
   | otherwise = error "Bridge proof already posted"
 processBridgeProof state _ _ _ = error $ "Invalid state for bridge proof: " ++ show state
