@@ -291,6 +291,7 @@ data GraphState
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , contestBlockHeight :: BitcoinBlockHeight
+      , refutedProof :: Maybe Proof -- the proof (data) being refuted
       , counterProofsAndConfs :: Map.Map OperatorIdx (Txid, BitcoinBlockHeight) -- the txids of the counterproof transactions submitted on chain along with their confirmation heights
       , counterProofNacks :: Map.Map OperatorIdx Txid -- the txids of the counterproof NACK transactions submitted on chain
       , counterProofLabels :: Map.Map OperatorIdx (NonEmpty Labels) -- the labels (GC labels) committed in the counterproofs
@@ -614,7 +615,7 @@ processAssignment GraphSigned {..} assignee deadline recipientDesc
           ++ " but this graph belongs to operator "
           ++ show operatorIdx
 -- reassignment
-processAssignment state@Assigned {..} newAssignee newDeadline newRecipientDesc
+processAssignment Assigned {..} newAssignee newDeadline newRecipientDesc
   -- recipient descriptor cannot be changed once assigned
   | recipientDesc /= newRecipientDesc =
       error "Recipient descriptor cannot be changed for an existing assignment"
@@ -763,6 +764,23 @@ processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
           )
   | otherwise = error "Invalid bridge proof transaction"
 processBridgeProof BridgeProofPosted {} _ _ _ = error "Bridge proof already posted"
+processBridgeProof
+  CounterProofPosted
+    { depositIdx = _depositIdx
+    , operatorIdx = _operatorIdx
+    , depositOutPoint = _depositOutPoint
+    , blockHeight = _blockHeight
+    , graphData = _graphData
+    , graphSummary = _graphSummary
+    , contestBlockHeight = _contestBlockHeight
+    , refutedProof = _refutedProof
+    , counterProofsAndConfs = _counterProofsAndConfs
+    , counterProofNacks = _counterProofNacks
+    , counterProofLabels = _counterProofLabels
+    }
+  _
+  _
+  _ = error "TODO"
 processBridgeProof state _ _ _ = error $ "Invalid state for bridge proof: " ++ show state
 
 processBridgeProofTimeout Contested {..} tx
@@ -802,6 +820,7 @@ processCounterProof Contested {..} opTable tx counterproofBlockHeight =
               { counterProofsAndConfs = newCounterProofs
               , counterProofNacks = mempty
               , counterProofLabels = newCounterProofLabels
+              , refutedProof = Nothing -- someone posted a counterproof _before_ the bridge proof
               , ..
               }
           , GraphTransitionOutput
@@ -833,6 +852,7 @@ processCounterProof BridgeProofPosted {..} opTable tx counterproofBlockHeight =
               { counterProofsAndConfs = newCounterProofs
               , counterProofNacks = mempty
               , counterProofLabels = newCounterProofLabels
+              , refutedProof = Just proof -- the counterproof is refuting this bridge proof
               , ..
               }
           , GraphTransitionOutput
