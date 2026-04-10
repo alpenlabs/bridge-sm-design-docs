@@ -269,6 +269,7 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , fulfillmentTxid' :: Maybe Txid -- needed to know whether a claim is valid in the subsequent states where proof may not be present.
       , contestBlockHeight :: BitcoinBlockHeight -- needed in case the operator needs to be slashed after contested payout timeout
       , bridgeProofTxid :: Txid -- the txid of the bridge proof transaction submitted on chain
       , bridgeProofBlockHeight :: BitcoinBlockHeight -- the block height at which the bridge proof transaction was confirmed
@@ -294,6 +295,7 @@ data GraphState
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , contestBlockHeight :: BitcoinBlockHeight
+      , fulfillmentTxid' :: Maybe Txid -- needed to know whether a claim is valid in the absence of a bridge proof.
       , refutedProof :: Maybe Proof -- the proof (data) being refuted
       , counterProofsAndConfs :: Map.Map OperatorIdx (Txid, BitcoinBlockHeight) -- the txids of the counterproof transactions submitted on chain along with their confirmation heights
       , counterProofNacks :: Map.Map OperatorIdx Txid -- the txids of the counterproof NACK transactions submitted on chain
@@ -1042,7 +1044,17 @@ notifyNewBlock curState@Contested {..} _opTable newBlockHeight
       )
   | otherwise = (curState {blockHeight = newBlockHeight}, emptyOutput)
 -- check if ACK is possible
-notifyNewBlock curState@CounterProofPosted {..} opTable newBlockHeight
+notifyNewBlock curState@CounterProofPosted {refutedProof, fulfillmentTxid', ..} opTable newBlockHeight
+  | isNothing refutedProof && newBlockHeight > contestBlockHeight + proofTimeout =
+      ( curState {blockHeight = newBlockHeight}
+      , GraphTransitionOutput
+          { signal = Nothing
+          , duty =
+              if povIdx opTable /= operatorIdx && isNothing fulfillmentTxid'
+                then Just PublishBridgeProofTimeout {signedTimeoutTx = "bridge_proof_timeout_tx_placeholder"}
+                else Nothing
+          }
+      )
   | newBlockHeight > contestBlockHeight + payoutTimeout =
       (curState {blockHeight = newBlockHeight}, mkSlashOutput curState) -- Placeholder for slash transaction
       -- if no one ACK's their counterproof, the operator could still get a payout (even without NACK-ing)
