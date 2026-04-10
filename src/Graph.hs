@@ -764,23 +764,14 @@ processBridgeProof Contested {..} opTable tx bridgeProofBlockHeight
           )
   | otherwise = error "Invalid bridge proof transaction"
 processBridgeProof BridgeProofPosted {} _ _ _ = error "Bridge proof already posted"
-processBridgeProof
-  CounterProofPosted
-    { depositIdx = _depositIdx
-    , operatorIdx = _operatorIdx
-    , depositOutPoint = _depositOutPoint
-    , blockHeight = _blockHeight
-    , graphData = _graphData
-    , graphSummary = _graphSummary
-    , contestBlockHeight = _contestBlockHeight
-    , refutedProof = _refutedProof
-    , counterProofsAndConfs = _counterProofsAndConfs
-    , counterProofNacks = _counterProofNacks
-    , counterProofLabels = _counterProofLabels
-    }
-  _
-  _
-  _ = error "TODO"
+processBridgeProof CounterProofPosted {refutedProof, ..} _ _ _
+  | isNothing refutedProof =
+      let proof = "proof_placeholder" -- Placeholder for proof (needs to be extracted from tx)
+          counterProofTx = "counterproof_tx_placeholder" -- Placeholder for counterproof transaction
+      in  ( CounterProofPosted {refutedProof = Just proof, ..}
+          , GraphTransitionOutput {signal = Nothing, duty = Just PublishCounterProof {counterProofTx, ..}}
+          )
+  | otherwise = error "Bridge proof already posted"
 processBridgeProof state _ _ _ = error $ "Invalid state for bridge proof: " ++ show state
 
 processBridgeProofTimeout Contested {..} tx
