@@ -796,6 +796,18 @@ processBridgeProofTimeout Contested {..} tx
       , emptyOutput
       )
   | otherwise = error "Invalid bridge proof timeout transaction"
+processBridgeProofTimeout CounterProofPosted {..} tx
+  | txid tx == bridgeProofTimeout graphSummary && isNothing refutedProof -- proof has to be Nothing for the timeout to be posted but adding check for safety
+    =
+      ( BridgeProofTimedout
+          { expectedSlashTxid = slash graphSummary
+          , signedSlashTx = "slash_tx_placeholder" -- Placeholder for signed slash transaction
+          , claimTxid = claim graphSummary
+          , ..
+          }
+      , emptyOutput
+      )
+  | otherwise = error "Invalid bridge proof timeout transaction"
 processBridgeProofTimeout BridgeProofTimedout {} _ = error "Bridge proof timeout already processed"
 processBridgeProofTimeout state _ = error $ "Invalid state for bridge proof timeout: " ++ show state
 
