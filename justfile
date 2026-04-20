@@ -92,9 +92,9 @@ watch: ensure-watch-tools
 # Install development tools (HLint and Fourmolu via Cabal)
 setup:
     @echo "Installing HLint..."
-    cabal install hlint
+    cabal install --overwrite-policy=always hlint
     @echo "Installing Fourmolu..."
-    cabal install fourmolu
+    cabal install --overwrite-policy=always fourmolu
     @echo ""
     @echo "Note: 'just watch' also requires 'fd' and 'entr'"
     @echo "Install them with your package manager (e.g., 'brew install fd entr' on macOS)"

@@ -7,7 +7,7 @@ The specification is written in Haskell and provides a general sense of what eac
 
 ### Prerequisites
 
-- [GHC](https://www.haskell.org/ghc/) 9.12+ (required for base 4.21.0.0 and GHC2024)
+- [GHC](https://www.haskell.org/ghc/) 9.12.x (required for `base-4.21` and `GHC2024`)
 - [Cabal](https://www.haskell.org/cabal/) 3.0+
 - [Just](https://github.com/casey/just) - Command runner for development tasks
 
