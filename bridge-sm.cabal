@@ -59,7 +59,7 @@ library
     import:           warnings
 
     -- Modules exported by the library.
-    exposed-modules:  
+    exposed-modules:
         Deposit,
         Operator,
         Graph,
@@ -72,7 +72,7 @@ library
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    
+    build-depends:
         base ^>=4.21.0.0,
         containers ^>=0.7
 
