@@ -133,7 +133,7 @@ data StakeDuty
       { stakeTx :: Transaction -- the unsigned stake transaction ready to be signed and published
       }
   | PublishUnstakingTx
-      { unstakingTx :: Transaction -- the unstaking transaction ready to be published
+      { unstakingTx :: Transaction -- the signed finalized unstaking transaction ready to be published
       }
   | Nag
       { duty :: NagDuty -- specific nag duty
@@ -178,8 +178,10 @@ data OperatorTable where
 opCardinality :: OperatorTable -> Int
 opCardinality OperatorTable {..} = Set.size operators
 
--- Placeholder verification for partial signatures
--- For real MuSig2 verification, requires: individual nonces, aggregated nonces, and partial signature
+-- Placeholder verification for partial signatures.
+-- In the real MuSig2 flow, each partial is checked per input against that operator's pubnonce,
+-- the aggregated nonce, and the signing context; only after every operator passes verification
+-- are the final signatures aggregated.
 verifyPartialSig :: OperatorTable -> OperatorIdx -> NonEmpty PubNonce -> NonEmpty AggNonce -> PartialSig -> Bool
 verifyPartialSig _opTable _operatorIdx _pubNonces _aggNonces _partialSig =
   True -- Placeholder: accept all signatures for now
@@ -332,7 +334,7 @@ notifyNewBlock state newHeight
       error "Rejected: Rejecting already processed block height"
 notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
   | btcBlockHeight > unstakingIntentBlockHeight + unstakingTimelock =
-      let unstakingTx = "unsigned_unstaking_tx_placeholder" -- In a real implementation, this would be constructed from the stake data and finalized using pre-shared signatures.
+      let unstakingTx = "signed_finalized_unstaking_tx_placeholder" -- In a real implementation, this would be the fully signed finalized unstaking transaction ready for broadcast.
           output = StakeTransitionOutput {duty = Just PublishUnstakingTx {unstakingTx}}
       in  (state {lastBlockHeight = btcBlockHeight}, output)
   | otherwise = (PreimageRevealed {lastBlockHeight = btcBlockHeight, ..}, emptyOutput)
