@@ -37,7 +37,6 @@ type StakeFunctor a = NonEmpty a -- Placeholder for per-transaction graph data
 type Preimage = [Word8] -- Placeholder for actual preimage data
 type Txid = String -- Placeholder for actual transaction ID
 type Transaction = String -- Placeholder for transaction
-type OutPoint = (Txid, U32) -- Placeholder for actual outpoint
 type PubNonce = String -- Placeholder for public nonce (used for MuSig2 signing)
 type AggNonce = String -- Placeholder for aggregated nonce (used for MuSig2 signing)
 type PartialSig = String -- Placeholder for partial signature (used for MuSig2 signing)
@@ -57,8 +56,8 @@ expectedStakeTxidFromSummary _ = "expected_stake_txid_placeholder" -- Placeholde
 expectedUnstakingTxidFromSummary :: StakeGraphSummary -> Txid
 expectedUnstakingTxidFromSummary _ = "expected_unstaking_txid_placeholder" -- Placeholder implementation
 
-inpoints :: Transaction -> NonEmpty OutPoint
-inpoints _ = ("txid_placeholder", 0) :| [] -- Placeholder implementation
+expectedUnstakingIntentTxidFromSummary :: StakeGraphSummary -> Txid
+expectedUnstakingIntentTxidFromSummary _ = "expected_unstaking_intent_txid_placeholder" -- Placeholder implementation
 
 -- Parameters
 -- Numbers are chosen arbitrarily
@@ -300,20 +299,21 @@ processStakeConfirmed Confirmed {} _ = error "Duplicate: Stake has already been 
 processStakeConfirmed state _ = error $ "Rejected: Invalid state for stake confirmation: " ++ show state
 
 processPreimageRevealed Confirmed {..} tx btcBlockHeight
-  | (expectedStakeTxidFromSummary summary, 0) == NonEmpty.head (inpoints tx) =
-      let revealedPreimage = replicate 32 0 -- In a real implementation, this would be derived from the transaction witness
-      in  let newState =
-                PreimageRevealed
-                  { lastBlockHeight = btcBlockHeight
-                  , stakeData = stakeData
-                  , preimage = revealedPreimage
-                  , unstakingIntentBlockHeight = btcBlockHeight
-                  , expectedUnstakingTxid = expectedUnstakingTxidFromSummary summary
-                  , signatures = signatures
-                  }
-              output = StakeTransitionOutput {duty = Nothing}
-          in  (newState, output)
-  | otherwise = error "Rejected: Transaction does not match expected unstaking intent transaction"
+  | txid tx /= expectedUnstakingIntentTxidFromSummary summary =
+      error "Rejected: Transaction does not match expected unstaking intent transaction"
+  | otherwise =
+      let revealedPreimage = replicate 32 0 -- Placeholder for extracting the first witness stack item preimage
+          newState =
+            PreimageRevealed
+              { lastBlockHeight = btcBlockHeight
+              , stakeData = stakeData
+              , preimage = revealedPreimage
+              , unstakingIntentBlockHeight = btcBlockHeight
+              , expectedUnstakingTxid = expectedUnstakingTxidFromSummary summary
+              , signatures = signatures
+              }
+          output = StakeTransitionOutput {duty = Nothing}
+      in  (newState, output)
 processPreimageRevealed PreimageRevealed {} _ _ = error "Duplicate: Preimage has already been revealed"
 processPreimageRevealed Unstaked {} _ _ = error "Rejected: Terminal state"
 processPreimageRevealed state _ _ = error $ "Invalid Event: Invalid state for preimage revelation: " ++ show state
