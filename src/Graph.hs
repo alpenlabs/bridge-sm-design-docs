@@ -1256,7 +1256,7 @@ processRetryTick state opTable = case state of
     | operatorIdx /= povIdx opTable -- not my graph
         && isJust refutedProof -- proof exists
         && not (verify $ fromJust refutedProof) -- existing proof is invalid
-        && povIdx opTable `elem` Map.keys counterProofsAndConfs -> -- haven't posted the counterproof yet
+        && povIdx opTable `notElem` Map.keys counterProofsAndConfs -> -- haven't posted the counterproof yet
         Set.singleton PublishCounterProof {counterProofTx = "counterproof_tx_placeholder", proof = fromJust refutedProof, ..}
     | otherwise -> Set.empty
   -- the rest of the duties need not be retried
