@@ -69,16 +69,19 @@ unstakingTimelock = 3024 -- maximum duration (in Bitcoin blocks) for the withdra
 -- Each such state is recognized uniquely by the operator index
 data StakeState
   = Created -- state where the state has been initialized (must happen at genesis/setup)
-      { lastBlockHeight :: BitcoinBlockHeight -- the height of the last Bitcoin block observed by this state machine
+      { operatorIdx :: OperatorIdx -- index of the operator who owns the stake
+      , lastBlockHeight :: BitcoinBlockHeight -- the height of the last Bitcoin block observed by this state machine
       }
   | StakeGraphGenerated -- state where the data required to generate the entire graph has been generated/received
-      { lastBlockHeight :: BitcoinBlockHeight
+      { operatorIdx :: OperatorIdx
+      , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData -- data required to construct a stake transaction
       , summary :: StakeGraphSummary -- collection of all txids in the stake graph
       , pubNonces :: Map.Map OperatorIdx (StakeFunctor PubNonce) -- public nonces collected from operators
       }
   | UnstakingNoncesCollected -- state where the nonces required to sign the unstaking transactions have been collected
-      { lastBlockHeight :: BitcoinBlockHeight
+      { operatorIdx :: OperatorIdx
+      , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , summary :: StakeGraphSummary
       , pubNonces :: Map.Map OperatorIdx (StakeFunctor PubNonce)
@@ -86,19 +89,22 @@ data StakeState
       , partialSignatures :: Map.Map OperatorIdx (StakeFunctor PartialSig) -- partial signatures collected from operators
       }
   | UnstakingSigned -- state where the unstaking transactions have been signed
-      { lastBlockHeight :: BitcoinBlockHeight
+      { operatorIdx :: OperatorIdx
+      , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , summary :: StakeGraphSummary
       , unstakingSignatures :: StakeFunctor Signature -- aggregated signatures for the unstaking transactions
       }
   | Confirmed -- state where the stake transaction has been confirmed on-chain
-      { lastBlockHeight :: BitcoinBlockHeight
+      { operatorIdx :: OperatorIdx
+      , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , summary :: StakeGraphSummary
       , signatures :: Maybe (StakeFunctor Signature) -- signatures may be absent if collection finished too late
       }
   | PreimageRevealed -- state where the unstaking preimage has been revealed via the unstaking intent transaction posted on-chain
-      { lastBlockHeight :: BitcoinBlockHeight
+      { operatorIdx :: OperatorIdx
+      , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
       , preimage :: Preimage -- the unstaking preimage revealed by the operator
       , unstakingIntentBlockHeight :: BitcoinBlockHeight -- the block height at which the unstaking intent transaction was confirmed
@@ -106,7 +112,8 @@ data StakeState
       , signatures :: Maybe (StakeFunctor Signature) -- signatures may be absent if collection finished too late
       }
   | Unstaked -- state where the unstaking transaction has been confirmed on-chain
-      { preimage :: Preimage
+      { operatorIdx :: OperatorIdx
+      , preimage :: Preimage
       , unstakingTxid :: Txid -- the txid of the unstaking transaction
       }
   deriving (Show, Eq, Ord)
@@ -209,7 +216,8 @@ notifyNewBlock :: StakeState -> BitcoinBlockHeight -> (StakeState, StakeTransiti
 processStakeData Created {..} stakeData =
   let newState =
         StakeGraphGenerated
-          { lastBlockHeight = lastBlockHeight
+          { operatorIdx = operatorIdx
+          , lastBlockHeight = lastBlockHeight
           , stakeData = stakeData
           , summary = stakeGraphSummaryFromStakeData stakeData
           , pubNonces = Map.empty
@@ -229,7 +237,8 @@ processUnstakingNonces StakeGraphGenerated {..} opTable operatorIdx' operatorPub
           let aggNonces = "agg_nonce_placeholder" :| [] -- In a real implementation, this would be computed from the collected nonces
               newState =
                 UnstakingNoncesCollected
-                  { lastBlockHeight = lastBlockHeight
+                  { operatorIdx = operatorIdx
+                  , lastBlockHeight = lastBlockHeight
                   , stakeData = stakeData
                   , summary = summary
                   , pubNonces = updatedNonces
@@ -261,7 +270,8 @@ processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' part
           let signatures = "signature_placeholder" :| [] -- In a real implementation, this would be computed from the collected partial signatures and agg nonce
               newState =
                 UnstakingSigned
-                  { lastBlockHeight = lastBlockHeight
+                  { operatorIdx = operatorIdx
+                  , lastBlockHeight = lastBlockHeight
                   , stakeData = stakeData
                   , summary = summary
                   , unstakingSignatures = signatures
@@ -277,7 +287,8 @@ processStakeConfirmed UnstakingSigned {..} tx
   | txid tx == expectedStakeTxidFromSummary summary =
       let newState =
             Confirmed
-              { lastBlockHeight = lastBlockHeight
+              { operatorIdx = operatorIdx
+              , lastBlockHeight = lastBlockHeight
               , stakeData = stakeData
               , summary = summary
               , signatures = Just unstakingSignatures
@@ -289,7 +300,8 @@ processStakeConfirmed UnstakingNoncesCollected {..} tx
   | txid tx == expectedStakeTxidFromSummary summary =
       let newState =
             Confirmed
-              { lastBlockHeight = lastBlockHeight
+              { operatorIdx = operatorIdx
+              , lastBlockHeight = lastBlockHeight
               , stakeData = stakeData
               , summary = summary
               , signatures = Nothing
@@ -307,7 +319,8 @@ processPreimageRevealed Confirmed {..} tx btcBlockHeight
       let revealedPreimage = replicate 32 0 -- Placeholder for extracting the first witness stack item preimage
           newState =
             PreimageRevealed
-              { lastBlockHeight = btcBlockHeight
+              { operatorIdx = operatorIdx
+              , lastBlockHeight = btcBlockHeight
               , stakeData = stakeData
               , preimage = revealedPreimage
               , unstakingIntentBlockHeight = btcBlockHeight
@@ -322,7 +335,12 @@ processPreimageRevealed state _ _ = error $ "Invalid Event: Invalid state for pr
 
 processUnstaking PreimageRevealed {..} tx
   | txid tx == expectedUnstakingTxid =
-      let newState = Unstaked {preimage = preimage, unstakingTxid = expectedUnstakingTxid}
+      let newState =
+            Unstaked
+              { operatorIdx = operatorIdx
+              , preimage = preimage
+              , unstakingTxid = expectedUnstakingTxid
+              }
           output = StakeTransitionOutput {duty = Nothing}
       in  (newState, output)
   | otherwise = error "Rejected: Unexpected transaction for unstaking"
@@ -381,7 +399,7 @@ processNagTick state opTable =
   in  Set.fromList
         $ mapMaybe
           ( \opIdx -> case state of
-              Created {} -> Nothing
+              Created {operatorIdx} -> Just Nag {duty = NagStakeData {operatorIdx}}
               StakeGraphGenerated {} -> Just Nag {duty = NagUnstakingNonces {operatorIdx = opIdx}}
               UnstakingNoncesCollected {} -> Just Nag {duty = NagUnstakingPartials {operatorIdx = opIdx}}
               _ -> Nothing
