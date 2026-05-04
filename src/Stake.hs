@@ -15,6 +15,7 @@ module Stake
   , notifyNewBlock
   , hasStaked
   , isUnstaked
+  , isSlashed
   , getPreimage
   , lastProcessedBlock
   , processNagTick
@@ -419,8 +420,13 @@ isUnstaked _ = False
 -- this is not information that will change over time, so it is not emitted as a signal in response to events
 getPreimage :: StakeState -> Maybe Preimage
 getPreimage PreimageRevealed {..} = Just preimage
+getPreimage Slashed {preimage' = Just preimage} = Just preimage
 getPreimage Unstaked {..} = Just preimage
 getPreimage _ = Nothing
+
+isSlashed :: StakeState -> Bool
+isSlashed Slashed {} = True
+isSlashed _ = False
 
 lastProcessedBlock :: StakeState -> Maybe BitcoinBlockHeight
 lastProcessedBlock state = case state of
