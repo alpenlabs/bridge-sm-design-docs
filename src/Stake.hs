@@ -32,7 +32,6 @@ type U32 = Word32
 type OperatorIdx = U32
 type BitcoinBlockHeight = U32
 type StakeData = String -- Placeholder for actual stake inputs (required to generate the entire staking/unstaking graph)
-type StakeGraphSummary = String -- Placeholder for graph summary (e.g. stake graph txids)
 type StakeFunctor a = NonEmpty a -- Placeholder for per-transaction graph data
 type Preimage = [Word8] -- Placeholder for actual preimage data
 type Txid = String -- Placeholder for actual transaction ID
@@ -44,20 +43,23 @@ type Signature = String -- Placeholder for aggregated signature
 type SchnorrKey = String -- Placeholder for Schnorr public key
 type P2PKey = String -- Placeholder for P2P public key
 
+data StakeGraphSummary = StakeGraphSummary
+  { stake :: Txid
+  , unstakingIntent :: Txid
+  , unstaking :: Txid
+  }
+  deriving (Show, Eq, Ord)
+
 txid :: Transaction -> Txid
 txid _ = "txid_placeholder" -- Placeholder implementation
 
 stakeGraphSummaryFromStakeData :: StakeData -> StakeGraphSummary
-stakeGraphSummaryFromStakeData _ = "stake_graph_summary_placeholder" -- Placeholder implementation
-
-expectedStakeTxidFromSummary :: StakeGraphSummary -> Txid
-expectedStakeTxidFromSummary _ = "expected_stake_txid_placeholder" -- Placeholder implementation
-
-expectedUnstakingTxidFromSummary :: StakeGraphSummary -> Txid
-expectedUnstakingTxidFromSummary _ = "expected_unstaking_txid_placeholder" -- Placeholder implementation
-
-expectedUnstakingIntentTxidFromSummary :: StakeGraphSummary -> Txid
-expectedUnstakingIntentTxidFromSummary _ = "expected_unstaking_intent_txid_placeholder" -- Placeholder implementation
+stakeGraphSummaryFromStakeData _ =
+  StakeGraphSummary
+    { stake = "stake_txid_placeholder"
+    , unstakingIntent = "unstaking_intent_txid_placeholder"
+    , unstaking = "unstaking_txid_placeholder"
+    } -- Placeholder implementation
 
 -- Parameters
 -- Numbers are chosen arbitrarily
@@ -284,7 +286,7 @@ processUnstakingPartials UnstakingSigned {} _ _ _ = error "Duplicate: Unstaking 
 processUnstakingPartials state _ _ _ = error $ "Rejected: Invalid state for collecting unstaking partials: " ++ show state
 
 processStakeConfirmed UnstakingSigned {..} tx
-  | txid tx == expectedStakeTxidFromSummary summary =
+  | txid tx == stake summary =
       let newState =
             Confirmed
               { operatorIdx = operatorIdx
@@ -297,7 +299,7 @@ processStakeConfirmed UnstakingSigned {..} tx
       in  (newState, output)
   | otherwise = error "Rejected: Unexpected transaction for stake confirmation"
 processStakeConfirmed UnstakingNoncesCollected {..} tx
-  | txid tx == expectedStakeTxidFromSummary summary =
+  | txid tx == stake summary =
       let newState =
             Confirmed
               { operatorIdx = operatorIdx
@@ -313,7 +315,7 @@ processStakeConfirmed Confirmed {} _ = error "Duplicate: Stake has already been 
 processStakeConfirmed state _ = error $ "Rejected: Invalid state for stake confirmation: " ++ show state
 
 processPreimageRevealed Confirmed {..} tx btcBlockHeight
-  | txid tx /= expectedUnstakingIntentTxidFromSummary summary =
+  | txid tx /= unstakingIntent summary =
       error "Rejected: Transaction does not match expected unstaking intent transaction"
   | otherwise =
       let revealedPreimage = replicate 32 0 -- Placeholder for extracting the first witness stack item preimage
@@ -324,7 +326,7 @@ processPreimageRevealed Confirmed {..} tx btcBlockHeight
               , stakeData = stakeData
               , preimage = revealedPreimage
               , unstakingIntentBlockHeight = btcBlockHeight
-              , expectedUnstakingTxid = expectedUnstakingTxidFromSummary summary
+              , expectedUnstakingTxid = unstaking summary
               , signatures = signatures
               }
           output = StakeTransitionOutput {duty = Nothing}
