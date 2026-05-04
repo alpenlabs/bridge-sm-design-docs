@@ -10,6 +10,7 @@ module Stake
   , processUnstakingPartials
   , processStakeConfirmed
   , processPreimageRevealed
+  , processSlashConfirmed
   , processUnstaking
   , notifyNewBlock
   , hasStaked
@@ -42,6 +43,7 @@ type PartialSig = String -- Placeholder for partial signature (used for MuSig2 s
 type Signature = String -- Placeholder for aggregated signature
 type SchnorrKey = String -- Placeholder for Schnorr public key
 type P2PKey = String -- Placeholder for P2P public key
+type OutPoint = (Txid, U32) -- Placeholder for Bitcoin transaction outpoint (txid and output index)
 
 data StakeGraphSummary = StakeGraphSummary
   { stake :: Txid
@@ -49,6 +51,9 @@ data StakeGraphSummary = StakeGraphSummary
   , unstaking :: Txid
   }
   deriving (Show, Eq, Ord)
+
+inpoints :: Transaction -> NonEmpty OutPoint
+inpoints _ = ("txid_placeholder", 0) :| [] -- Placeholder implementation for input outpoints (head :| tail)
 
 txid :: Transaction -> Txid
 txid _ = "txid_placeholder" -- Placeholder implementation
@@ -65,6 +70,10 @@ stakeGraphSummaryFromStakeData _ =
 -- Numbers are chosen arbitrarily
 unstakingTimelock :: U32
 unstakingTimelock = 3024 -- maximum duration (in Bitcoin blocks) for the withdrawal game
+
+-- Constants
+stakeOutputIndex :: U32
+stakeOutputIndex = 1 -- the output index in the stake transaction that is used as input
 
 -- State
 -- Represents the state of the operator stakes
@@ -108,10 +117,15 @@ data StakeState
       { operatorIdx :: OperatorIdx
       , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
+      , summary :: StakeGraphSummary
       , preimage :: Preimage -- the unstaking preimage revealed by the operator
       , unstakingIntentBlockHeight :: BitcoinBlockHeight -- the block height at which the unstaking intent transaction was confirmed
-      , expectedUnstakingTxid :: Txid -- the expected txid of the unstaking transaction
       , signatures :: Maybe (StakeFunctor Signature) -- signatures may be absent if collection finished too late
+      }
+  | Slashed -- state where the operator's stake has been slashed by another operator
+      { operatorIdx :: OperatorIdx
+      , summary :: StakeGraphSummary
+      , preimage' :: Maybe Preimage -- the preimage revealed if transition occurs from the `PreimageRevealed` state (needed for UnstakingBurn)
       }
   | Unstaked -- state where the unstaking transaction has been confirmed on-chain
       { operatorIdx :: OperatorIdx
@@ -201,6 +215,10 @@ verifyAllPartials
 verifyAllPartials opTable opIdx pubNonces aggNonces partials =
   all (verifyPartialSig opTable opIdx pubNonces aggNonces) (NonEmpty.toList partials)
 
+isSlashTx :: StakeGraphSummary -> Transaction -> Bool
+-- Spends the stake output but is not the unstaking transaction
+isSlashTx summary tx = ((stake summary, stakeOutputIndex) `elem` inpoints tx) && txid tx /= unstaking summary
+
 -- State Transition Functions
 -- Functions to handle state transitions based on events
 -- Declarations
@@ -211,6 +229,7 @@ processUnstakingPartials
   :: StakeState -> OperatorTable -> OperatorIdx -> NonEmpty PartialSig -> (StakeState, StakeTransitionOutput) -- UnstakingNoncesCollected -> UnstakingSigned
 processStakeConfirmed :: StakeState -> Transaction -> (StakeState, StakeTransitionOutput) -- UnstakingSigned -> Confirmed
 processPreimageRevealed :: StakeState -> Transaction -> BitcoinBlockHeight -> (StakeState, StakeTransitionOutput) -- Confirmed -> PreimageRevealed
+processSlashConfirmed :: StakeState -> Transaction -> (StakeState, StakeTransitionOutput) -- (Confirmed | PreimageRevealed) -> Slashed
 processUnstaking :: StakeState -> Transaction -> (StakeState, StakeTransitionOutput) -- PreimageRevealed -> Unstaked
 notifyNewBlock :: StakeState -> BitcoinBlockHeight -> (StakeState, StakeTransitionOutput) -- PreimageRevealed -> PreimageRevealed (with duty to publish unstaking tx)
 
@@ -323,11 +342,9 @@ processPreimageRevealed Confirmed {..} tx btcBlockHeight
             PreimageRevealed
               { operatorIdx = operatorIdx
               , lastBlockHeight = btcBlockHeight
-              , stakeData = stakeData
               , preimage = revealedPreimage
               , unstakingIntentBlockHeight = btcBlockHeight
-              , expectedUnstakingTxid = unstaking summary
-              , signatures = signatures
+              , ..
               }
           output = StakeTransitionOutput {duty = Nothing}
       in  (newState, output)
@@ -335,13 +352,37 @@ processPreimageRevealed PreimageRevealed {} _ _ = error "Duplicate: Preimage has
 processPreimageRevealed Unstaked {} _ _ = error "Rejected: Terminal state"
 processPreimageRevealed state _ _ = error $ "Invalid Event: Invalid state for preimage revelation: " ++ show state
 
+processSlashConfirmed Confirmed {..} tx
+  | isSlashTx summary tx =
+      let newState =
+            Slashed
+              { preimage' = Nothing
+              , ..
+              }
+          output = StakeTransitionOutput {duty = Nothing}
+      in  (newState, output)
+  | otherwise = error "Rejected: Transaction does not match expected slash transaction"
+processSlashConfirmed PreimageRevealed {..} tx
+  | isSlashTx summary tx =
+      let newState =
+            Slashed
+              { preimage' = Just preimage
+              , ..
+              }
+          output = StakeTransitionOutput {duty = Nothing}
+      in  (newState, output)
+  | otherwise = error "Rejected: Transaction does not match expected slash transaction"
+processSlashConfirmed Slashed {} _ = error "Duplicate: Stake has already been slashed"
+processSlashConfirmed Unstaked {} _ = error "Rejected: Terminal state"
+processSlashConfirmed state _ = error $ "Invalid Event: Invalid state for slash confirmation: " ++ show state
+
 processUnstaking PreimageRevealed {..} tx
-  | txid tx == expectedUnstakingTxid =
+  | txid tx == unstaking summary =
       let newState =
             Unstaked
               { operatorIdx = operatorIdx
               , preimage = preimage
-              , unstakingTxid = expectedUnstakingTxid
+              , unstakingTxid = unstaking summary
               }
           output = StakeTransitionOutput {duty = Nothing}
       in  (newState, output)
@@ -358,6 +399,7 @@ notifyNewBlock state@PreimageRevealed {..} btcBlockHeight
           output = StakeTransitionOutput {duty = Just PublishUnstakingTx {unstakingTx}}
       in  (state {lastBlockHeight = btcBlockHeight}, output)
   | otherwise = (PreimageRevealed {lastBlockHeight = btcBlockHeight, ..}, emptyOutput)
+notifyNewBlock Slashed {} _ = error "Rejected: terminal state"
 notifyNewBlock Unstaked {} _ = error "Rejected: terminal state"
 notifyNewBlock state btcBlockHeight = (state {lastBlockHeight = btcBlockHeight}, emptyOutput)
 
