@@ -24,9 +24,9 @@ module Graph
   , processCounterProof
   , processCounterProofAckd
   , processCounterProofNackd
-  , processSlash
   , processPayout
   , processPayoutConnectorSpent
+  , processStakeSpent
   , notifyNewBlock
   , lastProcessedBlock
   , processNagTick
@@ -507,7 +507,7 @@ processCounterProof
   :: GraphState -> OperatorTable -> Transaction -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- BridgeProofPosted/CounterProofPosted -> CounterProofPosted
 processCounterProofAckd :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- CounterProofPosted -> Acked
 processCounterProofNackd :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- CounterProofPosted -> AllNackd
-processSlash :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- BridgeProofTimedout/Acked -> Slashed
+processStakeSpent :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- [`GraphSigned`..] -> [Aborted | Slashed | .stakeSpent = Just ..]
 processPayout :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- -> AllNackd/BridgeProofPosted/Claimed -> Withdrawn
 processPayoutConnectorSpent :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- [`Claimed`..`CounterProofPosted`] -> (Aborted | .payoutConnectorSpent = Just ..)
 notifyNewBlock :: GraphState -> OperatorTable -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- \* -> *TimedOut
@@ -984,38 +984,62 @@ processCounterProofNackd CounterProofPosted {..} tx =
 processCounterProofNackd AllNackd {} _ = error "All counterproofs already NACK'd"
 processCounterProofNackd state _ = error $ "Invalid state for counterproof NACK: " ++ show state
 
-mkSlashed :: DepositIdx -> OperatorIdx -> Txid -> (GraphState, GraphTransitionOutput)
-mkSlashed depositIdx operatorIdx slashTxid =
-  ( Slashed
-      { slashTxid = slashTxid
-      , ..
-      }
-  , GraphTransitionOutput
-      { signal = Just (OperatorSlashed operatorIdx) -- sent to the Operator State Machine
-      , duty = Nothing
-      }
-  )
-
-processSlash Contested {..} tx
-  | txid tx == slash graphSummary = mkSlashed depositIdx operatorIdx (txid tx)
-  | otherwise = error "Invalid slash transaction"
-processSlash BridgeProofPosted {..} tx
-  | txid tx == slash graphSummary = mkSlashed depositIdx operatorIdx (txid tx)
-  | otherwise = error "Invalid slash transaction"
-processSlash CounterProofPosted {..} tx
-  | txid tx == slash graphSummary = mkSlashed depositIdx operatorIdx (txid tx)
-  | otherwise = error "Invalid slash transaction"
-processSlash BridgeProofTimedout {..} tx
-  | txid tx == expectedSlashTxid = mkSlashed depositIdx operatorIdx (txid tx)
-  | otherwise = error "Invalid slash transaction"
-processSlash Acked {..} tx
-  | txid tx == expectedSlashTxid = mkSlashed depositIdx operatorIdx (txid tx)
-  | otherwise = error "Invalid slash transaction"
-processSlash AllNackd {..} tx
-  | txid tx == possibleSlashTxid = mkSlashed depositIdx operatorIdx (txid tx)
-  | otherwise = error "Invalid slash transaction"
-processSlash Slashed {} _ = error "Operator already slashed"
-processSlash state _ = error $ "Invalid state for slash: " ++ show state
+processStakeSpent state tx
+  | stakeOutPoint state `elem` inpoints tx =
+      let spenderTxid = txid tx
+          isPayoutConnectorSpent = isJust (payoutConnectorSpent state)
+          newState =
+            if getSlashTxid state == Just spenderTxid
+              then
+                -- if the stake is spent by the slash transaction, we can directly transition to `Slashed` without going through the intermediate states
+                -- this is only possible from certain states but for simplicity, we can just transition to this state directly,
+                -- and depend on bitcoin consensus to make sure the transaction graph is being followed.
+                Slashed {slashTxid = spenderTxid, depositIdx = state.depositIdx, operatorIdx = state.operatorIdx}
+              -- now for cases where stake is spent by a transaction other than this graph's slash transaction.
+              else case state of
+                NoncesCollected {..} -> NoncesCollected {stakeSpent = Just spenderTxid, ..}
+                GraphSigned {..} -> GraphSigned {stakeSpent = Just spenderTxid, ..}
+                Assigned {..} -> Assigned {stakeSpent = Just spenderTxid, ..}
+                Fulfilled {..} -> Fulfilled {stakeSpent = Just spenderTxid, ..}
+                Claimed {..} ->
+                  if isPayoutConnectorSpent
+                    then
+                      -- can't get payout and can't get slashed now, only thing to do is abort
+                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                    else Claimed {stakeSpent = Just spenderTxid, ..}
+                Contested {..} ->
+                  if isPayoutConnectorSpent
+                    then
+                      -- can't get payout and can't get slashed now, only thing to do is abort
+                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                    else
+                      Contested {stakeSpent = Just spenderTxid, ..}
+                BridgeProofPosted {..} ->
+                  if isPayoutConnectorSpent
+                    then
+                      -- can't get payout and can't get slashed now, only thing to do is abort
+                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                    else
+                      BridgeProofPosted {stakeSpent = Just spenderTxid, ..}
+                -- the only path from this state is slashing but if that has been spent, nothing more can be done so we abort
+                BridgeProofTimedout {..} -> Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                CounterProofPosted {..} ->
+                  if isPayoutConnectorSpent
+                    then
+                      -- can't get payout and can't get slashed now, only thing to do is abort
+                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                    else
+                      CounterProofPosted {stakeSpent = Just spenderTxid, ..}
+                -- the only possible path from here was slashed, so if the stake has already been spent, abort
+                Acked {..} ->
+                  Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                _ ->
+                  error
+                    "Stake spends need only be checked in GraphSigned, Assigned, Fulfilled, Contested, BridgeProofPosted, BridgeProofTimedout, CounterProofPosted and Acked states"
+      in  ( newState
+          , emptyOutput
+          )
+  | otherwise = error "Stake not spent in the provided transaction"
 
 mkWithdrawn :: DepositIdx -> OperatorIdx -> Transaction -> (GraphState, GraphTransitionOutput)
 mkWithdrawn depositIdx operatorIdx payoutTx =
@@ -1066,6 +1090,7 @@ processPayoutConnectorSpent state tx
               if isStakeSpent
                 then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
                 else state {payoutConnectorSpent = Just spenderTxid}
+            -- supposed to get the payout but if that connector is already burnt, the only thing to do is abort
             AllNackd {..} -> Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
             BridgeProofTimedout {} -> error "Rejected payout connector spend since in BridgeProofTimedout since payout is already impossible"
             Acked {} -> error "Rejected payout connector spend since in Ackd since payout is already impossible"
@@ -1230,6 +1255,18 @@ isPayoutTx state tx =
         CounterProofPosted {..} -> txid' == contestedPayout graphSummary
         AllNackd {..} -> txid' == expectedPayoutTxid
         _ -> False
+
+getSlashTxid :: GraphState -> Maybe Txid
+getSlashTxid state = case state of
+  -- only handle states from where slashing is possible
+  Claimed {..} -> Just $ slash graphSummary
+  Contested {..} -> Just $ slash graphSummary
+  BridgeProofPosted {..} -> Just $ slash graphSummary
+  BridgeProofTimedout {..} -> Just expectedSlashTxid
+  CounterProofPosted {..} -> Just $ slash graphSummary
+  Acked {..} -> Just expectedSlashTxid
+  AllNackd {..} -> Just possibleSlashTxid
+  _ -> Nothing
 
 lastProcessedBlock :: GraphState -> Maybe BitcoinBlockHeight
 lastProcessedBlock state = case state of
