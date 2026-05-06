@@ -346,13 +346,14 @@ data GraphState
       }
   | Acked
       { -- Represents a state where a counterproof has been ACK'd on chain
+        -- this state does not need `payoutConnectorSpent` since ACK itself prevents payouts
+        -- this state does not need [non-matching] `stakeSpent` because if that happens, we transition directly to `Aborted`
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
       , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
-      , stakeSpent :: Maybe Txid -- no need for payoutConnectorSpent here because if a counterproof is ACKd, then the payout is impossible regardless of whether the payout connector is spent or not
       , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
       , signedSlashTx :: Transaction -- signed slash transaction to publish if payout window elapses
       , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
@@ -830,7 +831,7 @@ processBridgeProof CounterProofPosted {refutedProof, ..} opTable _ _
 processBridgeProof state _ _ _ = error $ "Invalid state for bridge proof: " ++ show state
 
 processBridgeProofTimeout Contested {..} tx
-  | txid tx == bridgeProofTimeout graphSummary =
+  | txid tx == bridgeProofTimeout graphSummary && isNothing stakeSpent =
       ( BridgeProofTimedout
           { expectedSlashTxid = slash graphSummary
           , signedSlashTx = "slash_tx_placeholder" -- Placeholder for signed slash transaction
@@ -839,14 +840,30 @@ processBridgeProofTimeout Contested {..} tx
           }
       , emptyOutput
       )
+  -- if stake is already spent, then there is nothing more that needs to be done (as neither payout nor slashing is possible)
+  | txid tx == bridgeProofTimeout graphSummary && isJust stakeSpent =
+      ( Aborted
+          { reason = StakeSpent {spendingTxid = fromJust stakeSpent}
+          , ..
+          }
+      , emptyOutput
+      )
   | otherwise = error "Invalid bridge proof timeout transaction"
 processBridgeProofTimeout CounterProofPosted {..} tx
-  | txid tx == bridgeProofTimeout graphSummary && isNothing refutedProof -- proof has to be Nothing for the timeout to be posted but adding check for safety
+  | txid tx == bridgeProofTimeout graphSummary && isNothing stakeSpent && isNothing refutedProof -- proof has to be Nothing for the timeout to be posted but adding check for safety
     =
       ( BridgeProofTimedout
           { expectedSlashTxid = slash graphSummary
           , signedSlashTx = "slash_tx_placeholder" -- Placeholder for signed slash transaction
           , claimTxid = claim graphSummary
+          , ..
+          }
+      , emptyOutput
+      )
+  -- if stake is already spent, then there is nothing more that needs to be done (as neither payout nor slashing is possible)
+  | txid tx == bridgeProofTimeout graphSummary && isJust stakeSpent =
+      ( Aborted
+          { reason = StakeSpent {spendingTxid = fromJust stakeSpent}
           , ..
           }
       , emptyOutput
@@ -949,11 +966,19 @@ processCounterProof CounterProofPosted {..} opTable tx counterproofBlockHeight =
 processCounterProof state _ _ _ = error $ "Invalid state for counterproof: " ++ show state
 
 processCounterProofAckd CounterProofPosted {..} tx
-  | txid tx `elem` Map.elems (counterproofAcks graphSummary) =
+  | txid tx `elem` Map.elems (counterproofAcks graphSummary) && isNothing stakeSpent =
       ( Acked
           { expectedSlashTxid = slash graphSummary
           , signedSlashTx = "slash_tx_placeholder" -- Placeholder for signed slash transaction
           , claimTxid = claim graphSummary
+          , ..
+          }
+      , emptyOutput
+      )
+  -- if stake is already spent, then there is nothing more that needs to be done (as neither payout nor slashing is possible)
+  | txid tx `elem` Map.elems (counterproofAcks graphSummary) && isJust stakeSpent =
+      ( Aborted
+          { reason = StakeSpent {spendingTxid = fromJust stakeSpent}
           , ..
           }
       , emptyOutput
