@@ -127,6 +127,9 @@ data AbortReason
       { spendingTxid :: Txid -- the txid of the transaction that spent the payout connector
       }
   | DepositSpent
+  | StakeSpent
+      { spendingTxid :: Txid -- the txid of the transaction that spent the stake (via another GraphSM instance)
+      }
   deriving (Show, Eq, Ord)
 
 newtype OperatorTable = OperatorTable
@@ -199,6 +202,7 @@ data GraphState
       , nonces :: Map OperatorIdx (NonEmpty Nonce)
       , aggNonces :: NonEmpty AggNonce -- aggregated nonces (packed/flattened representation)
       , partials :: Map OperatorIdx (NonEmpty PartialSignature) -- partials from each operator
+      , stakeSpent :: Maybe Txid -- the txid of the transaction that spent the operator's stake (if present; used to determine whether the graph should be aborted or slashed)
       }
   | GraphSigned
       { -- Represents a state where all required aggregate signatures for this pegout graph have been collected
@@ -208,6 +212,7 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , stakeSpent :: Maybe Txid
       , maybeAggNonces :: Maybe (NonEmpty AggNonce) -- needed to respond to nag for graph partial signature; Nothing if reverted from Assigned
       , signatures :: NonEmpty Signature -- final signatures per operator graph (packed/flattened representation)
       }
@@ -220,6 +225,7 @@ data GraphState
       , graphData :: GraphData
       , graphSummary :: GraphSummary
       , signatures :: NonEmpty Signature
+      , stakeSpent :: Maybe Txid
       , assignee :: OperatorIdx -- the operator assigned to fulfill the withdrawal
       , deadline :: BitcoinBlockHeight -- the block height by which the withdrawal must be fulfilled
       , recipientDesc :: BtcDescriptor -- the BTC descriptor for the recipient
@@ -232,6 +238,7 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , stakeSpent :: Maybe Txid
       , coopPayoutFailed :: Bool -- whether cooperative payout has failed and unilateral claim path is activated
       , assignee :: OperatorIdx -- the operator assigned to fulfill the withdrawal
       , fulfillmentTxid :: Txid -- the txid of the fulfillment transaction submitted on chain
@@ -245,9 +252,11 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , stakeSpent :: Maybe Txid
       , fulfillmentTxid' :: Maybe Txid -- the txid of the fulfillment transaction submitted on chain (if present; could be absent for faulty claims)
       , fulfillmentBlockHeight' :: Maybe BitcoinBlockHeight -- the block height at which the fulfillment transaction was confirmed (if present; could be absent for faulty claims)
       , claimBlockHeight :: BitcoinBlockHeight -- the block height at which the claim transaction was confirmed (required for timeout calculations)
+      , payoutConnectorSpent :: Maybe Txid -- the txid of the transaction that spent the payout connector (if present; used to determine whether the graph should be aborted)
       }
   | Contested
       { -- Represents a state where the contest transaction has been posted on chain
@@ -257,6 +266,8 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , stakeSpent :: Maybe Txid
+      , payoutConnectorSpent :: Maybe Txid
       , fulfillmentTxid' :: Maybe Txid
       , fulfillmentBlockHeight' :: Maybe BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight -- the block height at which the contest transaction was confirmed
@@ -269,6 +280,8 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , stakeSpent :: Maybe Txid
+      , payoutConnectorSpent :: Maybe Txid
       , fulfillmentTxid' :: Maybe Txid -- needed to know whether a claim is valid in the subsequent states where proof may not be present.
       , contestBlockHeight :: BitcoinBlockHeight -- needed in case the operator needs to be slashed after contested payout timeout
       , bridgeProofTxid :: Txid -- the txid of the bridge proof transaction submitted on chain
@@ -277,6 +290,8 @@ data GraphState
       }
   | BridgeProofTimedout
       { -- Represents a state where the bridge proof timeout transaction has been posted on chain
+        -- does not need to track stake being spent because once that happens, we'll just abort the graph (as payout is not possible from here)
+        -- does not need to track the payout connector being spent either for the same reason
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
@@ -294,6 +309,8 @@ data GraphState
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
+      , stakeSpent :: Maybe Txid
+      , payoutConnectorSpent :: Maybe Txid
       , contestBlockHeight :: BitcoinBlockHeight
       , fulfillmentTxid' :: Maybe Txid -- needed to know whether a claim is valid in the absence of a bridge proof.
       , refutedProof :: Maybe Proof -- the proof (data) being refuted
@@ -303,6 +320,8 @@ data GraphState
       }
   | AllNackd
       { -- Represents a state where all possible counterproof transactions have been NACK'd on chain
+        -- no need for a `stakeSpent` field as payout might still be possible at this point.
+        -- no need for a `payoutConnectorSpent` field as we'll just move to abort the graph if that happens (as payout is not possible from there)
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
@@ -318,6 +337,7 @@ data GraphState
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
+      , stakeSpent :: Maybe Txid -- no need for payoutConnectorSpent here because if a counterproof is ACKd, then the payout is impossible regardless of whether the payout connector is spent or not
       , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
       , signedSlashTx :: Transaction -- signed slash transaction to publish if payout window elapses
       , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
@@ -540,6 +560,7 @@ processNonces AdaptorsVerified {..} execConfig (opIdx, receivedNonces) =
               { nonces = newNonces
               , aggNonces = NonEmpty.fromList ["agg_nonce_placeholder"] -- Placeholder for agg nonces
               , partials = mempty -- Placeholder for partial signatures collection
+              , stakeSpent = Nothing
               , ..
               }
           , GraphTransitionOutput
@@ -685,6 +706,7 @@ processClaim Fulfilled {..} tx claimBlockHeight
       ( Claimed
           { fulfillmentTxid' = Just fulfillmentTxid
           , fulfillmentBlockHeight' = Just fulfillmentBlockHeight
+          , payoutConnectorSpent = Nothing
           , ..
           }
       , emptyOutput
@@ -697,6 +719,7 @@ processClaim Assigned {..} tx claimBlockHeight
       ( Claimed
           { fulfillmentTxid' = Nothing
           , fulfillmentBlockHeight' = Nothing
+          , payoutConnectorSpent = Nothing
           , ..
           }
       , GraphTransitionOutput
@@ -710,6 +733,7 @@ processClaim GraphSigned {..} tx claimBlockHeight
       ( Claimed
           { fulfillmentTxid' = Nothing
           , fulfillmentBlockHeight' = Nothing
+          , payoutConnectorSpent = Nothing
           , ..
           }
       , GraphTransitionOutput
