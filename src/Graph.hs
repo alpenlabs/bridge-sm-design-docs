@@ -327,6 +327,7 @@ data GraphState
       , depositOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
+      , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
       , expectedPayoutTxid :: Txid -- the txid of the expected contested payout transaction (full summary can be discarded)
       , possibleSlashTxid :: Txid -- the txid of the possible slash transaction (this can happen if the operator is not functional/live)
       }
@@ -494,7 +495,7 @@ processCounterProofAckd :: GraphState -> Transaction -> (GraphState, GraphTransi
 processCounterProofNackd :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- CounterProofPosted -> AllNackd
 processSlash :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- BridgeProofTimedout/Acked -> Slashed
 processPayout :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- -> AllNackd/BridgeProofPosted/Claimed -> Withdrawn
-processPayoutConnectorSpent :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- [`Claimed`..`CounterProofPosted`] -> Aborted
+processPayoutConnectorSpent :: GraphState -> Transaction -> (GraphState, GraphTransitionOutput) -- [`Claimed`..`CounterProofPosted`] -> (Aborted | .payoutConnectorSpent = Just ..)
 notifyNewBlock :: GraphState -> OperatorTable -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- \* -> *TimedOut
 -- Definitions
 processGraphData Created {..} opTable graphData =
@@ -953,6 +954,7 @@ processCounterProofNackd CounterProofPosted {..} tx =
                   ( AllNackd
                       { expectedPayoutTxid = contestedPayout graphSummary
                       , possibleSlashTxid = slash graphSummary
+                      , claimTxid = claim graphSummary
                       , ..
                       }
                   , emptyOutput
@@ -1029,17 +1031,32 @@ processPayout state _ = error $ "Invalid state for payout: " ++ show state
 -- technically, this can only happen from the `Claimed` state
 -- but if the payout connector has been spent, it means we've already reached the `Claimed` state
 -- so this allows us to have a simpler definition for this STF
--- also note that this should be checked _after_ the payout checks
--- since payouts also spend this connector
 processPayoutConnectorSpent state tx
-  | any (`elem` inpoints tx) (getPayoutConnectorOutPoint state) =
-      ( Aborted
-          { reason = PayoutConnectorSpent {spendingTxid = txid tx}
-          , depositIdx = state.depositIdx
-          , operatorIdx = state.operatorIdx
-          }
-      , emptyOutput
-      )
+  | any (`elem` inpoints tx) (getPayoutConnectorOutPoint state) && not (isPayoutTx state tx) =
+      let spenderTxid = txid tx
+          isStakeSpent = isJust (stakeSpent state)
+          newState = case state of
+            Claimed {..} ->
+              if isStakeSpent
+                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                else state {payoutConnectorSpent = Just spenderTxid}
+            Contested {..} ->
+              if isStakeSpent
+                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                else state {payoutConnectorSpent = Just spenderTxid}
+            BridgeProofPosted {..} ->
+              if isStakeSpent
+                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                else state {payoutConnectorSpent = Just spenderTxid}
+            CounterProofPosted {..} ->
+              if isStakeSpent
+                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                else state {payoutConnectorSpent = Just spenderTxid}
+            AllNackd {..} -> Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+            BridgeProofTimedout {} -> error "Rejected payout connector spend since in BridgeProofTimedout since payout is already impossible"
+            Acked {} -> error "Rejected payout connector spend since in Ackd since payout is already impossible"
+            _ -> error "Payout connector can only be spent in Claimed, Contested, BridgeProofPosted or CounterProofPosted states"
+      in  (newState, emptyOutput)
   | otherwise = error "Payout connector not spent in the provided transaction"
 
 mkSlashOutput :: GraphState -> GraphTransitionOutput
@@ -1178,7 +1195,7 @@ getPayoutConnectorOutPoint state =
         BridgeProofTimedout {..} -> Just claimTxid
         Acked {..} -> Just claimTxid
         CounterProofPosted {..} -> Just graphSummary.claim
-        AllNackd {} -> Nothing
+        AllNackd {..} -> Just claimTxid
         Withdrawn {} -> Nothing
         Slashed {} -> Nothing
         Aborted {} -> Nothing
@@ -1187,6 +1204,18 @@ getPayoutConnectorOutPoint state =
           then Just (fromJust claimTxid', payoutConnectorIdx)
           else Nothing
   in  outpoint
+
+isPayoutTx :: GraphState -> Transaction -> Bool
+isPayoutTx state tx =
+  let txid' = txid tx
+  in  case state of
+        -- only handle states where payout is even possible
+        Claimed {..} -> txid' == uncontestedPayout graphSummary || txid tx == contestedPayout graphSummary
+        Contested {..} -> txid' == contestedPayout graphSummary
+        BridgeProofPosted {..} -> txid' == contestedPayout graphSummary
+        CounterProofPosted {..} -> txid' == contestedPayout graphSummary
+        AllNackd {..} -> txid' == expectedPayoutTxid
+        _ -> False
 
 lastProcessedBlock :: GraphState -> Maybe BitcoinBlockHeight
 lastProcessedBlock state = case state of
