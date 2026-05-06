@@ -399,6 +399,7 @@ data GraphDuty -- Tasks to be completed post state transition
       , graphInpoints :: NonEmpty OutPoint -- the inpoints of the graph (used to retrieve s2 musig2 session per input being signed)
       , graphTweaks :: NonEmpty Tweak -- the tweak required for taproot spend per input being signed
       , claimTxid :: Txid -- the txid of the claim transaction (since the claim transaction is under complete control of an operator, make sure this transaction does not exist on chain before signing off)
+      , stakeOutPoint :: OutPoint -- the outpoint of the stake transaction that this graph is associated with (used to make sure the stake has not been spent before signing off on the graph)
       }
   | PublishClaim
       { signedClaimTx :: Transaction -- the claim transaction to be published
@@ -590,6 +591,7 @@ processNonces AdaptorsVerified {..} execConfig (opIdx, receivedNonces) =
                       , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)] -- Placeholder for graph inpoints (needs to be extracted from graph)
                       , graphTweaks = NonEmpty.fromList [Nothing] -- Placeholder for graph tweaks (needs to be extracted from graph)
                       , claimTxid = claim graphSummary
+                      , stakeOutPoint = stakeOutPoint
                       }
               }
           )
@@ -617,7 +619,10 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
           else error $ "Duplicate partial signatures received from operator: " ++ show opIdx
       expectedOperatorCount = opCardinality execConfig
       claimTxid = claim graphSummary
-  in  if Map.size newPartials == expectedOperatorCount
+  in  -- even if the stake has been spent, collecting partials is still fine
+      -- so that if there is a race between partial generation and stake being spent,
+      -- the state machine can still make progress.
+      if Map.size newPartials == expectedOperatorCount
         then
           ( GraphSigned
               { maybeAggNonces = Just aggNonces
@@ -985,7 +990,7 @@ processCounterProofNackd AllNackd {} _ = error "All counterproofs already NACK'd
 processCounterProofNackd state _ = error $ "Invalid state for counterproof NACK: " ++ show state
 
 processStakeSpent state tx
-  | stakeOutPoint state `elem` inpoints tx =
+  | state.stakeOutPoint `elem` inpoints tx =
       let spenderTxid = txid tx
           isPayoutConnectorSpent = isJust (payoutConnectorSpent state)
           newState =
@@ -1411,6 +1416,7 @@ processNagReceivedGraphPartials state = case state of
         , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
         , graphTweaks = NonEmpty.fromList [Nothing]
         , claimTxid = claim graphSummary
+        , stakeOutPoint = stakeOutPoint
         }
   GraphSigned {..} ->
     case maybeAggNonces of
@@ -1424,6 +1430,7 @@ processNagReceivedGraphPartials state = case state of
             , graphInpoints = NonEmpty.fromList [("inpoints placeholder", 0)]
             , graphTweaks = NonEmpty.fromList [Nothing]
             , claimTxid = claim graphSummary
+            , stakeOutPoint = stakeOutPoint
             }
       Nothing -> Set.empty -- reverted from Assigned, don't respond to nag
   _ -> Set.empty
