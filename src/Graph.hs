@@ -170,6 +170,7 @@ data GraphState
         depositIdx :: DepositIdx -- the index of the deposit this graph is associated with
       , operatorIdx :: OperatorIdx -- the index of the operator this graph belongs to
       , depositOutPoint :: OutPoint -- the outpoint deposit transaction associated with this contract , outputIndex :: U32 -- the output index within the deposit transaction that is to be used for this pegout (to allow batched deposits)
+      , stakeOutPoint :: OutPoint -- the outpoint of the stake transaction that this graph is associated with
       , blockHeight :: BitcoinBlockHeight -- the height of the most recent block that this state is aware of
       }
   | GraphGenerated
@@ -177,6 +178,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary -- the txids of the generated pegout graph transactions (required for tx filtering)
@@ -186,6 +188,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -196,6 +199,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -209,6 +213,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -221,6 +226,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -235,6 +241,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -249,6 +256,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -263,6 +271,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -277,6 +286,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -295,6 +305,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
       , expectedSlashTxid :: Txid -- the txid of the expected slash transaction (full summary can be discarded)
@@ -306,6 +317,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , graphData :: GraphData
       , graphSummary :: GraphSummary
@@ -325,6 +337,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
       , claimTxid :: Txid -- the txid of the claim transaction (required in order to check if the payout connector is spent)
@@ -336,6 +349,7 @@ data GraphState
         depositIdx :: DepositIdx
       , operatorIdx :: OperatorIdx
       , depositOutPoint :: OutPoint
+      , stakeOutPoint :: OutPoint
       , blockHeight :: BitcoinBlockHeight
       , contestBlockHeight :: BitcoinBlockHeight
       , stakeSpent :: Maybe Txid -- no need for payoutConnectorSpent here because if a counterproof is ACKd, then the payout is impossible regardless of whether the payout connector is spent or not
