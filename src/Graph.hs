@@ -130,6 +130,11 @@ data AbortReason
   | StakeSpent
       { spendingTxid :: Txid -- the txid of the transaction that spent the stake (via another GraphSM instance)
       }
+  | -- both the payout connector and the stake outpoint have been consumed; preserves both txids for forensics
+    Both
+      { payoutConnectorSpendingTxid :: Txid -- the txid of the transaction that spent the payout connector
+      , stakeSpendingTxid :: Txid -- the txid of the transaction that spent the stake
+      }
   deriving (Show, Eq, Ord)
 
 newtype OperatorTable = OperatorTable
@@ -1035,20 +1040,41 @@ processStakeSpent state tx
                   if isPayoutConnectorSpent
                     then
                       -- can't get payout and can't get slashed now, only thing to do is abort
-                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                      Aborted
+                        { reason =
+                            Both
+                              { payoutConnectorSpendingTxid = fromJust payoutConnectorSpent
+                              , stakeSpendingTxid = spenderTxid
+                              }
+                        , ..
+                        }
                     else Claimed {stakeSpent = Just spenderTxid, ..}
                 Contested {..} ->
                   if isPayoutConnectorSpent
                     then
                       -- can't get payout and can't get slashed now, only thing to do is abort
-                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                      Aborted
+                        { reason =
+                            Both
+                              { payoutConnectorSpendingTxid = fromJust payoutConnectorSpent
+                              , stakeSpendingTxid = spenderTxid
+                              }
+                        , ..
+                        }
                     else
                       Contested {stakeSpent = Just spenderTxid, ..}
                 BridgeProofPosted {..} ->
                   if isPayoutConnectorSpent
                     then
                       -- can't get payout and can't get slashed now, only thing to do is abort
-                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                      Aborted
+                        { reason =
+                            Both
+                              { payoutConnectorSpendingTxid = fromJust payoutConnectorSpent
+                              , stakeSpendingTxid = spenderTxid
+                              }
+                        , ..
+                        }
                     else
                       BridgeProofPosted {stakeSpent = Just spenderTxid, ..}
                 -- the only path from this state is slashing but if that has been spent, nothing more can be done so we abort
@@ -1057,7 +1083,14 @@ processStakeSpent state tx
                   if isPayoutConnectorSpent
                     then
                       -- can't get payout and can't get slashed now, only thing to do is abort
-                      Aborted {reason = StakeSpent {spendingTxid = spenderTxid}, ..}
+                      Aborted
+                        { reason =
+                            Both
+                              { payoutConnectorSpendingTxid = fromJust payoutConnectorSpent
+                              , stakeSpendingTxid = spenderTxid
+                              }
+                        , ..
+                        }
                     else
                       CounterProofPosted {stakeSpent = Just spenderTxid, ..}
                 -- the only possible path from here was slashed, so if the stake has already been spent, abort
@@ -1106,19 +1139,51 @@ processPayoutConnectorSpent state tx
           newState = case state of
             Claimed {..} ->
               if isStakeSpent
-                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                then
+                  Aborted
+                    { reason =
+                        Both
+                          { payoutConnectorSpendingTxid = spenderTxid
+                          , stakeSpendingTxid = fromJust stakeSpent
+                          }
+                    , ..
+                    }
                 else state {payoutConnectorSpent = Just spenderTxid}
             Contested {..} ->
               if isStakeSpent
-                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                then
+                  Aborted
+                    { reason =
+                        Both
+                          { payoutConnectorSpendingTxid = spenderTxid
+                          , stakeSpendingTxid = fromJust stakeSpent
+                          }
+                    , ..
+                    }
                 else state {payoutConnectorSpent = Just spenderTxid}
             BridgeProofPosted {..} ->
               if isStakeSpent
-                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                then
+                  Aborted
+                    { reason =
+                        Both
+                          { payoutConnectorSpendingTxid = spenderTxid
+                          , stakeSpendingTxid = fromJust stakeSpent
+                          }
+                    , ..
+                    }
                 else state {payoutConnectorSpent = Just spenderTxid}
             CounterProofPosted {..} ->
               if isStakeSpent
-                then Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
+                then
+                  Aborted
+                    { reason =
+                        Both
+                          { payoutConnectorSpendingTxid = spenderTxid
+                          , stakeSpendingTxid = fromJust stakeSpent
+                          }
+                    , ..
+                    }
                 else state {payoutConnectorSpent = Just spenderTxid}
             -- supposed to get the payout but if that connector is already burnt, the only thing to do is abort
             AllNackd {..} -> Aborted {reason = PayoutConnectorSpent {spendingTxid = spenderTxid}, ..}
