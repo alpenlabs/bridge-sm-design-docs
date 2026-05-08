@@ -999,15 +999,27 @@ processCounterProofNackd CounterProofPosted {..} tx =
           let nacks = Map.insert nackdIdx (txid tx) counterProofNacks
               expectedNacks = Map.size (counterproofs graphSummary)
           in  if Map.size nacks == expectedNacks
-                then
-                  ( AllNackd
-                      { expectedPayoutTxid = contestedPayout graphSummary
-                      , possibleSlashTxid = slash graphSummary
-                      , claimTxid = claim graphSummary
-                      , ..
-                      }
-                  , emptyOutput
-                  )
+                then case payoutConnectorSpent of
+                  -- The only path forward from `AllNackd` is the contested payout, which consumes
+                  -- the payout connector. If the connector is already gone, abort directly instead
+                  -- of entering a state with no exit (`AllNackd` does not carry the
+                  -- `payoutConnectorSpent` field, so the prior record would otherwise be lost).
+                  Just spenderTxid ->
+                    ( Aborted
+                        { reason = PayoutConnectorSpent {spendingTxid = spenderTxid}
+                        , ..
+                        }
+                    , emptyOutput
+                    )
+                  Nothing ->
+                    ( AllNackd
+                        { expectedPayoutTxid = contestedPayout graphSummary
+                        , possibleSlashTxid = slash graphSummary
+                        , claimTxid = claim graphSummary
+                        , ..
+                        }
+                    , emptyOutput
+                    )
                 else
                   ( CounterProofPosted
                       { counterProofNacks = nacks
