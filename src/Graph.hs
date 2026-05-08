@@ -629,17 +629,26 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
       -- so that if there is a race between partial generation and stake being spent,
       -- the state machine can still make progress.
       if Map.size newPartials == expectedOperatorCount
-        then
-          ( GraphSigned
-              { maybeAggNonces = Just aggNonces
-              , signatures = NonEmpty.fromList ["signature_placeholder"] -- Placeholder for signatures
-              , ..
-              }
-          , GraphTransitionOutput
-              { signal = Just (GraphAvailable claimTxid operatorIdx)
-              , duty = Nothing
-              }
-          )
+        then case stakeSpent of
+          Just _ ->
+            ( GraphSigned
+                { maybeAggNonces = Just aggNonces
+                , signatures = NonEmpty.fromList ["signature_placeholder"] -- Placeholder for signatures
+                , ..
+                }
+            , emptyOutput
+            )
+          Nothing ->
+            ( GraphSigned
+                { maybeAggNonces = Just aggNonces
+                , signatures = NonEmpty.fromList ["signature_placeholder"] -- Placeholder for signatures
+                , ..
+                }
+            , GraphTransitionOutput
+                { signal = Just (GraphAvailable claimTxid operatorIdx)
+                , duty = Nothing
+                }
+            )
         else
           ( NoncesCollected
               { partials = newPartials
@@ -1111,9 +1120,17 @@ processStakeSpent state tx
                 _ ->
                   error
                     "Stake spends need only be checked in GraphSigned, Assigned, Fulfilled, Contested, BridgeProofPosted, BridgeProofTimedout, CounterProofPosted and Acked states"
-      in  ( newState
-          , emptyOutput
-          )
+          -- Emit `OperatorSlashed` whenever this STF terminalizes the graph as
+          -- `Slashed`, so downstream state machines learn that the operator
+          -- has been slashed on-chain.
+          output = case newState of
+            Slashed {} ->
+              GraphTransitionOutput
+                { signal = Just (OperatorSlashed state.operatorIdx)
+                , duty = Nothing
+                }
+            _ -> emptyOutput
+      in  (newState, output)
   | otherwise = error "Stake not spent in the provided transaction"
 
 mkWithdrawn :: DepositIdx -> OperatorIdx -> Transaction -> (GraphState, GraphTransitionOutput)
