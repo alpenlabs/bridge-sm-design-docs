@@ -202,6 +202,9 @@ data OperatorTable where
 opCardinality :: OperatorTable -> Int
 opCardinality OperatorTable {..} = Set.size operators
 
+povIdx :: OperatorTable -> OperatorIdx
+povIdx _cfg = 0 -- placeholder implementation
+
 -- Placeholder verification for partial signatures.
 -- In the real MuSig2 flow, each partial is checked per input against that operator's pubnonce,
 -- the aggregated nonce, and the signing context; only after every operator passes verification
@@ -298,7 +301,8 @@ processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' part
                   , summary = summary
                   , unstakingSignatures = signatures
                   }
-          in  (newState, emptyOutput)
+              duty = if operatorIdx == povIdx opTable then Just (PublishStake {stakeTx = "unsigned_stake_tx_placeholder"}) else Nothing -- Only the PoV operator needs to publish the stake transaction
+          in  (newState, StakeTransitionOutput {duty})
         else
           let newState = UnstakingNoncesCollected {partialSignatures = updatedPartials, ..}
           in  (newState, emptyOutput)
