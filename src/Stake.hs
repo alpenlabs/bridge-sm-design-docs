@@ -20,6 +20,7 @@ module Stake
   , lastProcessedBlock
   , processNagTick
   , processRetryTick
+  , processNagReceived
   ) where
 
 import Data.List.NonEmpty (NonEmpty ((:|)))
@@ -104,6 +105,8 @@ data StakeState
       { operatorIdx :: OperatorIdx
       , lastBlockHeight :: BitcoinBlockHeight
       , stakeData :: StakeData
+      , pubNonces :: Map.Map OperatorIdx (StakeFunctor PubNonce)
+      , aggNonces :: StakeFunctor AggNonce
       , summary :: StakeGraphSummary
       , unstakingSignatures :: StakeFunctor Signature -- aggregated signatures for the unstaking transactions
       }
@@ -300,6 +303,7 @@ processUnstakingPartials UnstakingNoncesCollected {..} opTable operatorIdx' part
                   , stakeData = stakeData
                   , summary = summary
                   , unstakingSignatures = signatures
+                  , ..
                   }
               duty = if operatorIdx == povIdx opTable then Just (PublishStake {stakeTx = "unsigned_stake_tx_placeholder"}) else Nothing -- Only the PoV operator needs to publish the stake transaction
           in  (newState, StakeTransitionOutput {duty})
@@ -440,6 +444,7 @@ lastProcessedBlock state = case state of
 -- Retry Handlers
 -- Declarations
 processNagTick :: StakeState -> OperatorTable -> Set.Set StakeDuty
+processNagReceived :: StakeState -> NagDuty -> Set.Set StakeDuty
 processRetryTick :: StakeState -> OperatorTable -> Set.Set StakeDuty
 -- Definitions
 processNagTick state opTable =
@@ -459,6 +464,29 @@ processNagTick state opTable =
               _ -> Nothing
           )
         $ Set.toList missingIds
+
+processNagReceivedStakeData :: StakeState -> Set.Set StakeDuty
+processNagReceivedNonces :: StakeState -> Set.Set StakeDuty
+processNagReceivedPartials :: StakeState -> Set.Set StakeDuty
+processNagReceived state nag = case nag of
+  NagStakeData {} -> processNagReceivedStakeData state
+  NagUnstakingNonces {} -> processNagReceivedNonces state
+  NagUnstakingPartials {} -> processNagReceivedPartials state
+
+processNagReceivedStakeData state = case state of
+  Created {operatorIdx} -> Set.singleton PublishStakeData {operatorIdx}
+  StakeGraphGenerated {operatorIdx} -> Set.singleton PublishStakeData {operatorIdx}
+  _ -> Set.empty
+
+processNagReceivedNonces state = case state of
+  StakeGraphGenerated {stakeData} -> Set.singleton PublishUnstakingNonces {stakeData}
+  UnstakingNoncesCollected {stakeData} -> Set.singleton PublishUnstakingNonces {stakeData}
+  _ -> Set.empty
+
+processNagReceivedPartials state = case state of
+  UnstakingNoncesCollected {stakeData, aggNonces} -> Set.singleton PublishUnstakingPartials {stakeData, aggNonces}
+  UnstakingSigned {stakeData, aggNonces} -> Set.singleton PublishUnstakingPartials {stakeData, aggNonces}
+  _ -> Set.empty
 
 processRetryTick state _ = case state of
   UnstakingSigned {} -> Set.singleton PublishStake {stakeTx = "unsigned_stake_tx_placeholder"} -- In a real implementation, this would be the actual unsigned stake transaction ready to be signed and published
