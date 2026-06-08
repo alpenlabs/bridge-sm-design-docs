@@ -1152,6 +1152,9 @@ processPayout Contested {..} tx
 processPayout BridgeProofPosted {..} tx
   | txid tx == contestedPayout graphSummary = mkWithdrawn depositIdx operatorIdx tx
   | otherwise = error "Invalid contested payout transaction"
+processPayout CounterProofPosted {..} tx -- this can happen due to liveness fault of watchtowers (such that ACK is not posted)
+  | txid tx == contestedPayout graphSummary = mkWithdrawn depositIdx operatorIdx tx
+  | otherwise = error "Invalid contested payout transaction"
 processPayout AllNackd {..} tx
   | txid tx == expectedPayoutTxid = mkWithdrawn depositIdx operatorIdx tx
   | otherwise = error "Invalid contested payout transaction"
