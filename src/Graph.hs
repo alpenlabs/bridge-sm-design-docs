@@ -14,6 +14,7 @@ module Graph
   , processAdaptorsVerification
   , processNonces
   , processPartials
+  , processDrtTakeBack
   , processAssignment
   , processFulfillment
   , processActivation
@@ -123,6 +124,8 @@ summarize _ =
 
 data AbortReason
   = UserTakeBack
+      { takeBackTxid :: Txid -- the txid of the transaction that took back the DRT
+      }
   | PayoutConnectorSpent
       { spendingTxid :: Txid -- the txid of the transaction that spent the payout connector
       }
@@ -477,6 +480,7 @@ data GraphSignal
 {-# HLINT ignore "Use newtype instead of data" #-}
 data DepositSignal
   = CooperativePathFailed DepositIdx -- signifies that the cooperative path for this deposit has failed and unilateral reimbursement must be initiated (triggers the `processActivation` STF)
+  | DrtTakenBack Txid DepositIdx -- signifies that the DRT for this deposit has been taken back by the operator (triggers the `processDrtTakeBack` STF with AbortReason of `UserTakeBack`)
   deriving (Show, Eq, Ord)
 
 -- Output from each state transition
@@ -500,6 +504,7 @@ processAdaptorsVerification :: GraphState -> (GraphState, GraphTransitionOutput)
 processNonces :: GraphState -> OperatorTable -> (OperatorIdx, NonEmpty Nonce) -> (GraphState, GraphTransitionOutput) -- AdaptorsVerified -> NoncesCollected
 processPartials
   :: GraphState -> OperatorTable -> (OperatorIdx, NonEmpty PartialSignature) -> (GraphState, GraphTransitionOutput) -- NoncesCollected -> GraphSigned
+processDrtTakeBack :: GraphState -> Txid -> (GraphState, GraphTransitionOutput) -- Created|AdaptorsVerified|NoncesCollected/GraphSigned -> Aborted {reason = UserTakeBack}
 processAssignment
   :: GraphState -> OperatorIdx -> BitcoinBlockHeight -> BtcDescriptor -> (GraphState, GraphTransitionOutput) -- GraphSigned/Assigned -> Assigned/GraphSigned
 processFulfillment :: GraphState -> Txid -> BitcoinBlockHeight -> (GraphState, GraphTransitionOutput) -- Assigned -> Fulfilled
@@ -658,6 +663,45 @@ processPartials NoncesCollected {..} execConfig (opIdx, receivedPartials) =
           )
 processPartials GraphSigned {} _ _ = error "Graph already signed"
 processPartials state _ _ = error $ "Invalid state for partials" ++ show state
+
+processDrtTakeBack state takeBackTxid =
+  case state of
+    Created {..} ->
+      ( Aborted
+          { reason = UserTakeBack {takeBackTxid}
+          , ..
+          }
+      , emptyOutput
+      )
+    GraphGenerated {..} ->
+      ( Aborted
+          { reason = UserTakeBack {takeBackTxid}
+          , ..
+          }
+      , emptyOutput
+      )
+    AdaptorsVerified {..} ->
+      ( Aborted
+          { reason = UserTakeBack {takeBackTxid}
+          , ..
+          }
+      , emptyOutput
+      )
+    NoncesCollected {..} ->
+      ( Aborted
+          { reason = UserTakeBack {takeBackTxid}
+          , ..
+          }
+      , emptyOutput
+      )
+    GraphSigned {..} ->
+      ( Aborted
+          { reason = UserTakeBack {takeBackTxid}
+          , ..
+          }
+      , emptyOutput
+      )
+    _ -> error $ "Invalid state for DRT take back: " ++ show state
 
 processAssignment GraphSigned {..} assignee deadline recipientDesc
   | assignee == operatorIdx =
