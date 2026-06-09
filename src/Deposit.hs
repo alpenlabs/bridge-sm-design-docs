@@ -251,6 +251,12 @@ data NagDuty
       }
   deriving (Show, Eq, Ord)
 
+-- Signals
+data DepositSignal
+  = CooperativePathFailure DepositIdx -- signifies that the cooperative path for this deposit has failed and unilateral reimbursement must be initiated (triggers the `processActivation` STF)
+  | DrtTakenBack Txid DepositIdx -- signifies that the DRT for this deposit has been taken back by the operator (triggers the `processDrtTakeBack` STF with AbortReason of `UserTakeBack`)
+  deriving (Show, Eq, Ord)
+
 -- Additional Types
 data ExecConfig = ExecConfig
   { operators :: Set.Set (OperatorIdx, P2pKey, SchnorrKey, AdaptorKey)
@@ -313,9 +319,9 @@ processPayoutDescriptor :: DepositState -> ExecConfig -> BtcDescriptor -> Operat
 processPayoutNonce :: DepositState -> ExecConfig -> PubNonce -> OperatorIdx -> (DepositState, Maybe DepositDuty)
 processPayoutPartial
   :: DepositState -> ExecConfig -> PartialSignature -> OperatorIdx -> (DepositState, Maybe DepositDuty)
-notifyNewBlock :: BitcoinBlockHeight -> DepositState -> DepositState
+notifyNewBlock :: BitcoinBlockHeight -> DepositState -> (DepositState, Maybe DepositSignal)
 processDepositSpend :: DepositState -> Transaction -> DepositState
-processDepositRequestSpend :: DepositState -> Transaction -> DepositState
+processDepositRequestSpend :: DepositState -> Transaction -> (DepositState, DepositSignal)
 -- Implementations
 processGraphGenerated deposit@Created {..} cfg claimTxid operatorIdx =
   let linkedGraphs' = linkedGraphs `Set.union` Set.singleton operatorIdx
@@ -563,17 +569,17 @@ processPayoutPartial _ _ _ _ = error "Invalid state transition"
 -- Processes information about new blocks and applies any updates related to block height timeouts
 notifyNewBlock height Fulfilled {..}
   | height > fulfillmentBlockHeight + cooperativePayoutWindow =
-      CooperativePathFailed {..}
+      (CooperativePathFailed {..}, Just $ CooperativePathFailure depositIdx)
   | height <= blockHeight =
       error "Rejecting already processed block"
 notifyNewBlock height PayoutDescriptorReceived {..}
   | height > fulfillmentBlockHeight + cooperativePayoutWindow =
-      CooperativePathFailed {..}
+      (CooperativePathFailed {..}, Just $ CooperativePathFailure depositIdx)
   | height <= blockHeight =
       error "Rejecting already processed block"
 notifyNewBlock height PayoutNoncesCollected {..}
   | height > fulfillmentBlockHeight + cooperativePayoutWindow =
-      CooperativePathFailed {..}
+      (CooperativePathFailed {..}, Just $ CooperativePathFailure depositIdx)
   | height <= blockHeight =
       error "Rejecting already processed block"
 notifyNewBlock _ Aborted {} = error "No more updates required" -- does not need any more updates
@@ -582,13 +588,13 @@ notifyNewBlock height Assigned {..}
   -- move back to Deposited state from Assigned if fulfillment deadline has elapsed.
   -- Can use (>=) if txs in a block are guaranteed to be processed before notifyNewBlock.
   | height > deadline =
-      Deposited {blockHeight = height, ..}
+      (Deposited {blockHeight = height, ..}, Nothing)
   | height <= blockHeight =
       error "Rejecting already processed block"
   | otherwise =
-      Assigned {blockHeight = height, ..}
+      (Assigned {blockHeight = height, ..}, Nothing)
 notifyNewBlock newHeight state = case lastProcessedBlock state of
-  Just h | newHeight > h -> state {blockHeight = newHeight}
+  Just h | newHeight > h -> (state {blockHeight = newHeight}, Nothing)
   _ -> error "Rejecting already processed block"
 
 -- The assignee never shares their partial signature to prevent payout tx hostage attacks.
@@ -618,19 +624,19 @@ chkUserSpend outPoint confirmedTx = outPoint `elem` inpoints confirmedTx && witn
 processDepositRequestSpend state confirmedTx = case state of
   Created {..}
     | chkUserSpend depositRequestOutPoint confirmedTx ->
-        Aborted {..}
+        (Aborted {..}, DrtTakenBack (txid confirmedTx) depositIdx)
     | otherwise -> error "not user spend"
   GraphGenerated {..}
     | chkUserSpend depositRequestOutPoint confirmedTx ->
-        Aborted {..}
+        (Aborted {..}, DrtTakenBack (txid confirmedTx) depositIdx)
     | otherwise -> error "not user spend"
   DepositNoncesCollected {..}
     | chkUserSpend depositRequestOutPoint confirmedTx ->
-        Aborted {..}
+        (Aborted {..}, DrtTakenBack (txid confirmedTx) depositIdx)
     | otherwise -> error "not user spend"
   DepositPartialsCollected {..}
     | chkUserSpend depositRequestOutPoint confirmedTx ->
-        Aborted {..}
+        (Aborted {..}, DrtTakenBack (txid confirmedTx) depositIdx)
     | otherwise -> error "not user spend"
   _ -> error $ "Invalid event for state: " ++ show state
 
