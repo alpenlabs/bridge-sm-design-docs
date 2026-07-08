@@ -198,6 +198,7 @@ data DepositDuty
     RequestPayoutNonce
       { depositIdx :: DepositIdx
       , povOperatorIdx :: OperatorIdx -- the index of the point-of-view operator
+      , payoutDescriptor :: Maybe BtcDescriptor -- the output descriptor of the operator for the cooperative payout (if already present)
       }
   | PublishPayoutNonces -- publish the nonce for spending the deposit utxo cooperatively
       { depositIdx :: DepositIdx -- the index of the deposit
@@ -454,7 +455,7 @@ processFulfillment Assigned {..} cfg fulfillmentTx fulfillmentBlockHeight
           povOperatorIdx = povIdx cfg
           duty =
             if assignee == povOperatorIdx
-              then Just RequestPayoutNonce {..}
+              then Just RequestPayoutNonce {payoutDescriptor = Nothing, ..}
               else Nothing
       in  (newState, duty)
   | otherwise =
@@ -698,7 +699,14 @@ processRetryTick state cfg = case state of
     | otherwise -> Set.empty
   Fulfilled {..}
     | assignee == povIdx cfg ->
-        Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg}
+        Set.singleton RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg, payoutDescriptor = Nothing}
+    | otherwise -> Set.empty
+  -- it may be that peers may not have received the payout descriptor yet, so we retry the request for it
+  -- it may also be that peers reject the descriptor if they haven't observed a fulfillment yet
+  PayoutDescriptorReceived {payoutOutputDesc, ..}
+    | assignee == povIdx cfg && Map.size payoutNonces < opCardinality cfg ->
+        Set.singleton
+          RequestPayoutNonce {depositIdx = depositIdx, povOperatorIdx = povIdx cfg, payoutDescriptor = Just payoutOutputDesc}
     | otherwise -> Set.empty
   PayoutNoncesCollected {..}
     | assignee == povIdx cfg && Map.size payoutPartialSignatures == opCardinality cfg - 1 ->
