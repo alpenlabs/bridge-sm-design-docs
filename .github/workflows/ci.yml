@@ -83,17 +83,42 @@ jobs:
   fourmolu:
     name: Fourmolu Format Check
     runs-on: ubuntu-latest
+    env:
+      FOURMOLU_VERSION: '0.20.0.0'
+      GHC_VERSION: '9.12.2'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Fourmolu
-        uses: haskell-actions/run-fourmolu@v11
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        id: setup
         with:
-          version: 'latest'
-          pattern: |
-            src/**/*.hs
-            test/**/*.hs
+          ghc-version: ${{ env.GHC_VERSION }}
+          cabal-version: 'latest'
+
+      - name: Cache Fourmolu
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/bin/fourmolu
+            ${{ steps.setup.outputs.cabal-store }}
+          key: fourmolu-${{ runner.os }}-ghc-${{ env.GHC_VERSION }}-${{ env.FOURMOLU_VERSION }}
+
+      - name: Install Fourmolu
+        run: |
+          mkdir -p "$HOME/.cabal/bin"
+          export PATH="$HOME/.cabal/bin:$PATH"
+          if ! command -v fourmolu >/dev/null || ! fourmolu --version | grep -q "fourmolu ${FOURMOLU_VERSION}"; then
+            cabal update
+            cabal install "fourmolu-${FOURMOLU_VERSION}" --install-method=copy --installdir="$HOME/.cabal/bin" --overwrite-policy=always
+          fi
+          echo "$HOME/.cabal/bin" >> "$GITHUB_PATH"
+
+      - name: Run Fourmolu
+        run: |
+          fourmolu --version
+          fourmolu --mode check src/ test/
 
   test:
     name: Test
