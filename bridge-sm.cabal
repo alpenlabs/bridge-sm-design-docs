@@ -107,4 +107,5 @@ test-suite bridge-sm-test
     -- Test dependencies.
     build-depends:
         base ^>=4.21.0.0,
+        containers ^>=0.7,
         bridge-sm
